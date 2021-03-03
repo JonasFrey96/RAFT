@@ -16,13 +16,23 @@ import signal
 import yaml
 import logging
 from pathlib import Path
-
+import copy
 # Frameworks
 import torch
+from torch.utils.tensorboard import SummaryWriter
+
+from pytorch_lightning import seed_everything, Trainer
+from pytorch_lightning.callbacks import EarlyStopping
+from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.callbacks import LearningRateMonitor
+from pytorch_lightning.callbacks import Callback
+from pytorch_lightning.profiler import AdvancedProfiler
 
 # Costume Modules
-from utils import file_path, load_yaml
+from src_utils import file_path, load_yaml, get_neptune_logger, get_tensorboard_logger
 from lightning import Network
+from src_utils import DotDict
+import datasets
 
 if __name__ == "__main__":
   def signal_handler(signal, frame):
@@ -34,7 +44,7 @@ if __name__ == "__main__":
   seed_everything(42)
 
   parser = argparse.ArgumentParser()    
-  parser.add_argument('--exp', type=file_path, default='/home/jonfrey/ASL/cfg/exp/scannet/scannet.yml',
+  parser.add_argument('--exp', type=file_path, default='cfg/exp/exp.yml',
                       help='The main experiment yaml file.')
 
   args = parser.parse_args()
@@ -47,12 +57,12 @@ if __name__ == "__main__":
 
   exp_cfg_path = args.exp    
   if local_rank != 0:
-    print(init, local_rank)
+    print(local_rank)
     rm = exp_cfg_path.find('cfg/exp/') + len('cfg/exp/')
     exp_cfg_path = os.path.join( exp_cfg_path[:rm],'tmp/',exp_cfg_path[rm:])
   exp = load_yaml(exp_cfg_path)
 
-  if local_rank == 0 and init:
+  if local_rank == 0:
     # Set in name the correct model path
     if exp.get('timestamp',True):
       timestamp = datetime.datetime.now().replace(microsecond=0).isoformat()
@@ -84,7 +94,7 @@ if __name__ == "__main__":
     exp['name'] = model_path
   else:
     # the correct model path has already been written to the yaml file.
-    model_path = os.path.join( exp['name'], f'rank_{local_rank}_{task_nr}')
+    model_path = os.path.join( exp['name'], f'rank_{local_rank}')
     # Create the directory
     if not os.path.exists(model_path):
       try:
@@ -93,17 +103,19 @@ if __name__ == "__main__":
         pass
   
   # SET NUMBER GPUS
-  if ( exp['trainer'] ).get('gpus', -1):
+  if ( exp['trainer'] ).get('gpus', -1) and os.environ['ENV_WORKSTATION_NAME'] is not  'hyrax':
     nr = torch.cuda.device_count()
     exp['trainer']['gpus'] = nr
     print( f'Set GPU Count for Trainer to {nr}!' )
-    
+  else:
+    exp['trainer']['gpus'] = [1]
   
   model = Network(exp=exp, env=env)
   
   lr_monitor = LearningRateMonitor(
     **exp['lr_monitor']['cfg'])
 
+  print(exp)
   if exp['cb_early_stopping']['active']:
     early_stop_callback = EarlyStopping(
     **exp['cb_early_stopping']['cfg']
@@ -112,14 +124,8 @@ if __name__ == "__main__":
   else:
     cb_ls = [lr_monitor]
   
-  tses = TaskSpecificEarlyStopping(
-    nr_tasks=exp['task_generator']['total_tasks'] , 
-    **exp['task_specific_early_stopping']
-  )
-  cb_ls.append(tses)
   if exp['cb_checkpoint']['active']:
     m = '/'.join( [a for a in model_path.split('/') if a.find('rank') == -1])
-    dic = copy.deepcopy( )
     checkpoint_callback = ModelCheckpoint(
       dirpath= m,
       filename= 'Checkpoint-{epoch:02d}--{step:06d}',
@@ -129,20 +135,14 @@ if __name__ == "__main__":
   
   
   if not exp.get('offline_mode', False):
-    if  logger_pass is None:
-      logger = get_neptune_logger(exp=exp,env=env,
-        exp_p =exp_cfg_path, env_p = env_cfg_path, project_name="jonasfrey96/"+exp['neptune_project_name'] )
-      exp['experiment_id'] = logger.experiment.id
-      print('created experiment id' +  str( exp['experiment_id']))
-    else:
-      logger = logger_pass
-    print('Neptune Experiment ID: '+ str( logger.experiment.id)+" TASK NR "+str( task_nr ) )
+   
+    logger = get_neptune_logger(exp=exp,env=env,
+      exp_p =exp_cfg_path, env_p = env_cfg_path, project_name="jonasfrey96/"+exp['neptune_project_name'] )
+    exp['experiment_id'] = logger.experiment.id
+    print('Created Experiment ID: ' +  str( exp['experiment_id']))
   else:
-    logger = TensorBoardLogger(
-      save_dir=model_path,
-      name= 'tensorboard', # Optional,
-      default_hp_metric=params, # Optional,
-    )
+    logger = get_tensorboard_logger(exp=exp,env=env,
+        exp_p =exp_cfg_path, env_p = env_cfg_path)
   
   # WRITE BACK NEW CONF FOR OTHER DDPs
   if local_rank == 0:
@@ -184,11 +184,12 @@ if __name__ == "__main__":
       raise Exception('Checkpoint not a file')
   
   
+  dataloader_train = datasets.fetch_dataloader( DotDict(exp['train_dataset']), env[exp['train_dataset']['stage'] ])
+  
   train_res = trainer.fit(model = model,
                           train_dataloader= dataloader_train,
-                          val_dataloaders= dataloader_list_test)
-  
+                          val_dataloaders= dataloader_train)
   try:
-      logger.experiment.stop()
+    logger.experiment.stop()
   except:
     pass

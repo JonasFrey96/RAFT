@@ -11,5 +11,4 @@ def file_path(string):
 def load_yaml(path):
   with open(path) as file:  
     res = yaml.load(file, Loader=yaml.FullLoader) 
-  return resimport os
-import yaml
+  return res

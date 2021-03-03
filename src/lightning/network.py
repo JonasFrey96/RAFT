@@ -33,10 +33,8 @@ from torch.nn import functional as F
 
 import datetime
 from math import ceil
-from models import RPOSE
-
-
-import RAFT
+from src_utils import DotDict
+from raft import RAFT
 __all__ = ['Network']
 
 # exclude extremly large displacements
@@ -52,7 +50,7 @@ class Network(LightningModule):
     self.hparams['lr'] = self._exp['lr']
     
     
-		self._model = RAFT(**self._exp['model']['cfg'])
+    self.model = RAFT(args = DotDict(self._exp['model']['args']) )
     
     self._mode = 'train'
     self._logged_images = {'train': 0, 'val': 0, 'test': 0}
@@ -62,7 +60,7 @@ class Network(LightningModule):
   def forward(self, batch, **kwargs):
     image1 = batch[0]
     image2 = batch[1]
-		flow_predictions = self._model(image1, image2, iters=self._exp['model']['iters'])
+    flow_predictions = self.model(image1, image2, iters=self._exp['model']['iters'])
     return flow_predictions
   
   def on_train_epoch_start(self):
@@ -80,7 +78,7 @@ class Network(LightningModule):
     BS = batch[0].shape[0]
     flow = batch[2]
     valid = valid[3]
-		flow_predictions = self(batch = batch)
+    flow_predictions = self(batch = batch)
     loss, metrics = sequence_loss(flow_predictions, flow, valid, self._exp['model']['gamma'])
     return {'loss': loss, 'pred': flow_predictions, 'target': flow}
   
