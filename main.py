@@ -103,13 +103,15 @@ if __name__ == "__main__":
         pass
   
   # SET NUMBER GPUS
-  if ( exp['trainer'] ).get('gpus', -1) and os.environ['ENV_WORKSTATION_NAME'] is not  'hyrax':
+  if ( exp['trainer'] ).get('gpus', -1) and os.environ['ENV_WORKSTATION_NAME'] != 'hyrax':
     nr = torch.cuda.device_count()
     exp['trainer']['gpus'] = nr
     print( f'Set GPU Count for Trainer to {nr}!' )
   else:
     exp['trainer']['gpus'] = [1]
   
+  print( exp['trainer']['gpus'] )
+
   model = Network(exp=exp, env=env)
   
   lr_monitor = LearningRateMonitor(

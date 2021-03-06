@@ -14,6 +14,7 @@ import os.path as osp
 from utils import frame_utils
 from utils.augmentor import FlowAugmentor, SparseFlowAugmentor
 
+from ycb import YCB
 
 class FlowDataset(data.Dataset):
     def __init__(self, aug_params=None, sparse=False):
@@ -228,6 +229,10 @@ def fetch_dataloader(args, kitti='/home/jonfrey/datasets/kitti', TRAIN_DS='C+T+K
 
         split = 'training' if args.mode == 'train' else 'testing' 
         train_dataset = KITTI(aug_params, split=split, root=kitti)
+
+    elif args.stage = 'ycb':
+        train_dataset = YCB( **args.params_ycb )
+
 
     print(args.loader)
     train_loader = data.DataLoader(train_dataset, **args.loader, drop_last=True)

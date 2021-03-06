@@ -41,7 +41,39 @@ __all__ = ['Network']
 MAX_FLOW = 400
 SUM_FREQ = 100
 VAL_FREQ = 5000
+# exclude extremly large displacements
+MAX_FLOW = 400
+SUM_FREQ = 100
+VAL_FREQ = 5000
 
+
+def sequence_loss(flow_preds, flow_gt, valid, gamma=0.8, max_flow=MAX_FLOW):
+    """ Loss function defined over sequence of flow predictions """
+
+    n_predictions = len(flow_preds)    
+    flow_loss = 0.0
+
+    # exlude invalid pixels and extremely large diplacements
+    mag = torch.sum(flow_gt**2, dim=1).sqrt()
+    valid = (valid >= 0.5) & (mag < max_flow)
+
+    for i in range(n_predictions):
+        i_weight = gamma**(n_predictions - i - 1)
+        i_loss = (flow_preds[i] - flow_gt).abs()
+        flow_loss += i_weight * (valid[:, None] * i_loss).mean()
+
+    epe = torch.sum((flow_preds[-1] - flow_gt)**2, dim=1).sqrt()
+    epe = epe.view(-1)[valid.view(-1)]
+
+    metrics = {
+        'epe': epe.mean().item(),
+        '1px': (epe < 1).float().mean().item(),
+        '3px': (epe < 3).float().mean().item(),
+        '5px': (epe < 5).float().mean().item(),
+    }
+
+    return flow_loss, metrics
+    
 class Network(LightningModule):
   def __init__(self, exp, env):
     super().__init__()
@@ -75,9 +107,17 @@ class Network(LightningModule):
       self._logged_images[k] = 0
           
   def training_step(self, batch, batch_idx):
-    BS = batch[0].shape[0]
+    """
+    img1 0-255 BS,C,H,W
+    img2 0-255 BS,C,H,W
+    flow BS,2,H,W   max [-155 263]
+    valid 0 or 1 
+
+    flow_predictons is a list len(flow_predictions) = iters , flow_predictions[0].shape == flow.shape 
+    """
+    BS = batch[0].shape[0] 
     flow = batch[2]
-    valid = valid[3]
+    valid = batch[3]
     flow_predictions = self(batch = batch)
     loss, metrics = sequence_loss(flow_predictions, flow, valid, self._exp['model']['gamma'])
     return {'loss': loss, 'pred': flow_predictions, 'target': flow}

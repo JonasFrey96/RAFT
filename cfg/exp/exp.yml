@@ -5,7 +5,7 @@ timestamp: true
 weights_restore: false
 checkpoint_restore: false
 checkpoint_load: test
-lr: 0.00002
+lr: 0.0001
 tag_list:
   - flow_estimation
 
@@ -33,7 +33,6 @@ trainer:
   progress_bar_refresh_rate: 1
   max_epochs: 1000
   gpus: -1
-  accelerator: ddp
   num_sanity_val_steps: 0
   check_val_every_n_epoch: 1
   profiler: False
@@ -51,6 +50,8 @@ model:
     # alternate_corr: 5
     # corr_radius: 5
     # corr_levels: 5
+  gamma: 0.85
+  iters: 12
 
 cb_early_stopping:
   active: false
@@ -75,14 +76,16 @@ cb_checkpoint:
 
 train_dataset:
   stage: kitti
-  image_size: [384, 512]
+  image_size:
+    - 288
+    - 960
   mode: train
 
   loader:
     pin_memory: true
-    batch_size: 6
+    batch_size: 2
     shuffle: true
-    num_workers: 4
+    num_workers: 0
     
 lr_monitor:
   cfg:

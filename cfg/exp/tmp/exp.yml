@@ -1,11 +1,11 @@
-name: /home/jonfrey/results/debug/2021-03-03T18:31:59_r
+name: /home/jonfrey/results/debug/2021-03-03T18:54:57_r
 neptune_project_name: rpose
 offline_mode: true
 timestamp: true
 weights_restore: false
 checkpoint_restore: false
 checkpoint_load: test
-lr: 2.0e-05
+lr: 0.0001
 tag_list:
 - flow_estimation
 lr_scheduler:
@@ -28,8 +28,8 @@ trainer:
   limit_test_batches: 1.0
   progress_bar_refresh_rate: 1
   max_epochs: 1000
-  gpus: 2
-  accelerator: ddp
+  gpus:
+  - 1
   num_sanity_val_steps: 0
   check_val_every_n_epoch: 1
   profiler: false
@@ -38,6 +38,8 @@ model:
   args:
     hello: TEST
     small: false
+  gamma: 0.85
+  iters: 12
 cb_early_stopping:
   active: false
   cfg:
@@ -60,14 +62,14 @@ cb_checkpoint:
 train_dataset:
   stage: kitti
   image_size:
-  - 384
-  - 512
+  - 288
+  - 960
   mode: train
   loader:
     pin_memory: true
-    batch_size: 6
+    batch_size: 2
     shuffle: true
-    num_workers: 4
+    num_workers: 0
 lr_monitor:
   cfg:
     logging_interval: step
