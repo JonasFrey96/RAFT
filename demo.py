@@ -15,7 +15,7 @@ from utils.utils import InputPadder
 
 
 
-DEVICE = 'cuda'
+DEVICE = 'cuda:1'
 
 def load_image(imfile):
     img = np.array(Image.open(imfile)).astype(np.uint8)
@@ -52,15 +52,18 @@ def demo(args):
                  glob.glob(os.path.join(args.path, '*.jpg'))
         
         images = sorted(images)
+
         for imfile1, imfile2 in zip(images[:-1], images[1:]):
             image1 = load_image(imfile1)
             image2 = load_image(imfile2)
 
             padder = InputPadder(image1.shape)
-            image1, image2 = padder.pad(image1, image2)
+            image1, image2 = padder.pad(image1, image2) # per image1 0-255 not normalized
 
             flow_low, flow_up = model(image1, image2, iters=20, test_mode=True)
-            viz(image1, flow_up)
+            
+            
+            # viz(image1, flow_up)
 
 
 if __name__ == '__main__':
@@ -70,6 +73,8 @@ if __name__ == '__main__':
     parser.add_argument('--small', action='store_true', help='use small model')
     parser.add_argument('--mixed_precision', action='store_true', help='use mixed precision')
     parser.add_argument('--alternate_corr', action='store_true', help='use efficent correlation implementation')
+    parser.add_argument('--baseline', default='store_true', help='use efficent correlation implementation')
+
     args = parser.parse_args()
 
     demo(args)
