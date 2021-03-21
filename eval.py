@@ -44,8 +44,10 @@ import numpy as np
 import imageio
 # Costume Modules
 
-from datasets import get_dataset
+from datasets_asl import get_dataset
 import cv2
+import time
+
 def writeFlowKITTI(filename, uv):
     uv = 64.0 * uv + 2**15
     valid = np.ones([uv.shape[0], uv.shape[1], 1])
@@ -55,6 +57,7 @@ def writeFlowKITTI(filename, uv):
 DEVICE = 'cuda:1'
 
 if __name__ == "__main__":
+	
 	parser = argparse.ArgumentParser() 
 	parser.add_argument('--eval', type=file_path, default="/home/jonfrey/ASL/cfg/eval/eval.yml",
 											help='Yaml containing dataloader config')
@@ -65,7 +68,7 @@ if __name__ == "__main__":
 
 	# SETUP MODEL
 	di = {
-    'model': 'models/raft-kitti.pth',
+    'model': '/home/jonfrey/RPOSE/models/raft-things.pth',
     'small': False,
     'mixed_precision': False,
     'alternate_corr': False,
@@ -91,6 +94,7 @@ if __name__ == "__main__":
 	env = env_cfg,
 	output_trafo = None,
 	)
+	sub = eval_cfg['dataset']['sub']
 	dataloader_test = torch.utils.data.DataLoader(dataset_test,
 	shuffle = False,
 	num_workers = 0,
@@ -104,19 +108,19 @@ if __name__ == "__main__":
 	globale_idx_to_image_path = dataset_test.image_pths
 
 
-	st = time.time()
+
 	with torch.no_grad():
 		# START EVALUATION
+		st = time.time()
 		for j, batch in enumerate( dataloader_test ):
 			images = batch[0].to(DEVICE)
 			target = batch[1].to(DEVICE)
 			ori_img = batch[2].to(DEVICE)
 			replayed = batch[3].to(DEVICE)
 			BS = images.shape[0]
-			global_idx = batch[4] 
+			global_idx = batch[4]
 
-
-			global_idx_2 = batch[4].clone() + 10
+			global_idx_2 = batch[4].clone() + sub
 			images_next_frame = images.clone()
 			# In average loading 1 Frame per batch
 			for b in range(BS):
@@ -138,17 +142,18 @@ if __name__ == "__main__":
 
 			images_next_frame *= 255
 			images *= 255
-			tra = tf.Resize(( int( images.shape[2]/2) ,int( images.shape[3]/2)))
-			flow_low, flow_up = model(tra( images ), tra( images_next_frame ), iters=20, test_mode=True)
+
+			# tra = tf.Resize(( int( images.shape[2]/2) ,int( images.shape[3]/2)))
+			# flow_low, flow_up = model(tra( images ), tra( images_next_frame ), iters=20, test_mode=True)
+			flow_low, flow_up = model( images, images_next_frame , iters=12, test_mode=True)
 
 			# pred = tra_up(torch.from_numpy(pred)).numpy()
-			
 			for b in range(BS):
 					if flow_valid[b] == 1:
 						img_path = globale_idx_to_image_path[global_idx[b]]
 						p = os.path.join(base,
 								img_path.split('/')[-3],
-								'flow',
+								f'flow_sub_{sub}',
 								img_path.split('/')[-1][:-4]+'.png')
 						Path(p).parent.mkdir(parents=True, exist_ok=True)
 						writeFlowKITTI(p , flow_up[b].permute(1,2,0).cpu())
@@ -156,11 +161,11 @@ if __name__ == "__main__":
 						img_path = globale_idx_to_image_path[global_idx[b]]
 						p = os.path.join(base,
 								img_path.split('/')[-3],
-								'flow',
+								f'flow_sub_{sub}',
 								img_path.split('/')[-1][:-4]+'.png')
 						Path(p).parent.mkdir(parents=True, exist_ok=True)
 						writeFlowKITTI(p , torch.zeros(flow_up[b].shape ).permute(1,2,0).cpu())	
-
-			print(j, "/" , len(dataloader_test), p)
-			print("Estimate Total: ", (time.time()-st)/(1+j)*(len(dataloader_test)),'s' )
-			print("Estimate Left: ", (time.time()-st)/(1+j)*(len(dataloader_test)-(1+j) ),'s' )
+			if j % 10 == 0:
+				print(j, "/" , len(dataloader_test), p)
+				print("Estimate Total: ", (time.time()-st)/(1+j)*(len(dataloader_test)),'s' )
+				print("Estimate Left: ", (time.time()-st)/(1+j)*(len(dataloader_test)-(1+j) ),'s' )

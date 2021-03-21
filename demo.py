@@ -1,3 +1,5 @@
+import os 
+os.chdir('/home/jonfrey/RPOSE')
 import sys
 sys.path.append('core')
 
@@ -12,7 +14,7 @@ from PIL import Image
 from raft import RAFT
 from utils import flow_viz
 from utils.utils import InputPadder
-
+from utils.frame_utils import writeFlowKITTI
 
 
 DEVICE = 'cuda:1'
@@ -50,8 +52,9 @@ def demo(args):
     with torch.no_grad():
         images = glob.glob(os.path.join(args.path, '*.png')) + \
                  glob.glob(os.path.join(args.path, '*.jpg'))
-        
-        images = sorted(images)
+        images = [i for i in images if i.find('flow') == -1]
+        fun = (lambda x:int( x.split('/')[-1][:-4]))
+        images.sort(key=fun)
 
         for imfile1, imfile2 in zip(images[:-1], images[1:]):
             image1 = load_image(imfile1)
@@ -60,16 +63,22 @@ def demo(args):
             padder = InputPadder(image1.shape)
             image1, image2 = padder.pad(image1, image2) # per image1 0-255 not normalized
 
+            # image1.shape torch.Size([1, 3, 440, 1024]) max 129 float32
             flow_low, flow_up = model(image1, image2, iters=20, test_mode=True)
             
+            new_name = imfile1.split('/')[:-1]+ [ 'flow' + imfile1.split('/')[-1][:-4] + '.png']
+            new_name = '/'.join(new_name)
+            print(flow_up.shape)
+            print( new_name)
+            writeFlowKITTI(new_name, (flow_up[0]).permute(1,2,0).cpu())
             
             # viz(image1, flow_up)
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model', help="restore checkpoint")
-    parser.add_argument('--path', help="dataset for evaluation")
+    parser.add_argument('--model', default='models/raft-things.pth', help="restore checkpoint")
+    parser.add_argument('--path', default='demo-frames', help="dataset for evaluation")
     parser.add_argument('--small', action='store_true', help='use small model')
     parser.add_argument('--mixed_precision', action='store_true', help='use mixed precision')
     parser.add_argument('--alternate_corr', action='store_true', help='use efficent correlation implementation')
