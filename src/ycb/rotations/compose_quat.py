@@ -6,7 +6,7 @@ if __name__ == "__main__":
     sys.path.append(os.path.join(os.getcwd() + '/src'))
     sys.path.append(os.path.join(os.getcwd() + '/lib'))
 
-from rotations import norm_quat
+from ycb.rotations import norm_quat
 
 
 def quaternion_raw_multiply(p, q):

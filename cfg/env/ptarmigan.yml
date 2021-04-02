@@ -1,0 +1,4 @@
+ycb: /media/scratch2/jonfrey/ycb/YCB_Video_Dataset
+kitti: /home/jonfrey/datasets/kitti
+base: /home/jonfrey/results
+workstation: True

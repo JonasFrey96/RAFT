@@ -40,27 +40,26 @@ if __name__ == "__main__":
     sys.exit(0)
   signal.signal(signal.SIGINT, signal_handler)
   signal.signal(signal.SIGTERM, signal_handler)
-
-  seed_everything(42)
-
+  
   parser = argparse.ArgumentParser()    
   parser.add_argument('--exp', type=file_path, default='cfg/exp/exp.yml',
                       help='The main experiment yaml file.')
 
   args = parser.parse_args()
+  exp_cfg_path = args.exp
   env_cfg_path = os.path.join('cfg/env', os.environ['ENV_WORKSTATION_NAME']+ '.yml')
-  env = load_yaml(env_cfg_path)
 
-
-  
+  seed_everything(42)
   local_rank = int(os.environ.get('LOCAL_RANK', 0))
 
-  exp_cfg_path = args.exp    
+
   if local_rank != 0:
-    print(local_rank)
+    print(init, local_rank)
     rm = exp_cfg_path.find('cfg/exp/') + len('cfg/exp/')
     exp_cfg_path = os.path.join( exp_cfg_path[:rm],'tmp/',exp_cfg_path[rm:])
+  
   exp = load_yaml(exp_cfg_path)
+  env = load_yaml(env_cfg_path)
 
   if local_rank == 0:
     # Set in name the correct model path
@@ -72,18 +71,10 @@ if __name__ == "__main__":
       model_path = os.path.join('/',*p[:-1] ,str(timestamp)+'_'+ p[-1] )
     else:
       model_path = os.path.join(env['base'], exp['name'])
-      try:
-        shutil.rmtree(model_path)
-      except:
-        pass
+      shutil.rmtree(model_path,ignore_errors=True)
+    
     # Create the directory
-    if not os.path.exists(model_path):
-      try:
-        os.makedirs(model_path)
-      except:
-        print("Failed generating network run folder")
-    else:
-      print("Network run folder already exits")
+    Path(model_path).mkdir(parents=True, exist_ok=True)
     
     # Only copy config files for the main ddp-task  
     exp_cfg_fn = os.path.split(exp_cfg_path)[-1]
@@ -94,23 +85,17 @@ if __name__ == "__main__":
     exp['name'] = model_path
   else:
     # the correct model path has already been written to the yaml file.
-    model_path = os.path.join( exp['name'], f'rank_{local_rank}')
+    model_path = os.path.join( exp['name'], f'rank_{local_rank}_{task_nr}')
     # Create the directory
-    if not os.path.exists(model_path):
-      try:
-        os.makedirs(model_path)
-      except:
-        pass
-  
-  # SET NUMBER GPUS
-  if ( exp['trainer'] ).get('gpus', -1) and os.environ['ENV_WORKSTATION_NAME'] != 'hyrax':
+    Path(model_path).mkdir(parents=True, exist_ok=True)
+
+  # SET GPUS
+  if ( exp['trainer'] ).get('gpus', -1) == -1 and os.environ['ENV_WORKSTATION_NAME'] != 'hyrax':
     nr = torch.cuda.device_count()
-    exp['trainer']['gpus'] = nr
     print( f'Set GPU Count for Trainer to {nr}!' )
-  else:
-    exp['trainer']['gpus'] = [1]
-  
-  print( exp['trainer']['gpus'] )
+    for i in range(nr):
+      print( f"Device {i}: ", torch.cuda.get_device_name(i) )
+    exp['trainer']['gpus'] = -1
 
   model = Network(exp=exp, env=env)
   
@@ -137,7 +122,6 @@ if __name__ == "__main__":
   
   
   if not exp.get('offline_mode', False):
-   
     logger = get_neptune_logger(exp=exp,env=env,
       exp_p =exp_cfg_path, env_p = env_cfg_path, project_name="jonasfrey96/"+exp['neptune_project_name'] )
     exp['experiment_id'] = logger.experiment.id
@@ -186,7 +170,7 @@ if __name__ == "__main__":
       raise Exception('Checkpoint not a file')
   
   
-  dataloader_train = datasets.fetch_dataloader( DotDict(exp['train_dataset']), env[exp['train_dataset']['stage'] ])
+  dataloader_train = datasets.fetch_dataloader( exp['train_dataset'], env )
   
   train_res = trainer.fit(model = model,
                           train_dataloader= dataloader_train,

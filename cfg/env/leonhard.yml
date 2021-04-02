@@ -1,3 +1,0 @@
-workstation: False
-base: /cluster/scratch/jonfrey/models/master_thesis
-kitti: /home/jonfrey/datasets/kitti

@@ -6,8 +6,8 @@ if __name__ == "__main__":
     sys.path.append(os.path.join(os.getcwd() + '/src'))
     sys.path.append(os.path.join(os.getcwd() + '/lib'))
 
-from helper import re_quat
-from rotations import norm_quat
+from ycb.rotations import re_quat
+from ycb.rotations import norm_quat
 def _copysign(a, b):
     """ From PyTorch3D see def _copysign(a, b)
     Return a tensor where each element has the absolute value taken from the,

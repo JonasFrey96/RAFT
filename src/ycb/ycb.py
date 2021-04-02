@@ -35,19 +35,14 @@ from scipy.interpolate import griddata
 import scipy.ndimage as nd
 
 # From costume modules
-from ycb_helper import re_quat
-from ycb_helper import ViewpointManager
-from ycb_helper import get_bb_from_depth, get_bb_real_target
-from ycb_helper import Augmentation
-from rotations import *
+from ycb.rotations import re_quat
+from ycb.ycb_helper import ViewpointManager
+from ycb.ycb_helper import get_bb_from_depth, get_bb_real_target
+from ycb.ycb_helper import Augmentation
+from ycb.rotations import *
 
 
-
-
-
-
-
-class YCB(torch.data.Dataset):
+class YCB(torch.utils.data.Dataset):
   def __init__(self, cfg_d, cfg_env):
     super(YCB, self).__init__(cfg_d, cfg_env)
     self._cfg_d = cfg_d

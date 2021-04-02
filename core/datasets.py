@@ -14,6 +14,9 @@ import os.path as osp
 from utils import frame_utils
 from utils.augmentor import FlowAugmentor, SparseFlowAugmentor
 
+import sys
+# sys.path.append(os.path.join( os.getcwd(), 'src'))
+
 from ycb import YCB
 
 class FlowDataset(data.Dataset):
@@ -197,45 +200,45 @@ class HD1K(FlowDataset):
             seq_ix += 1
 
 
-def fetch_dataloader(args, kitti='/home/jonfrey/datasets/kitti', TRAIN_DS='C+T+K+S+H'):
+def fetch_dataloader(cfg, env, TRAIN_DS='C+T+K+S+H'):
     """ Create the data loader for the corresponding trainign set """
 
-    if args.stage == 'chairs':
-        aug_params = {'crop_size': args.image_size, 'min_scale': -0.1, 'max_scale': 1.0, 'do_flip': True}
+    if cfg['stage'] == 'chairs':
+        aug_params = {'crop_size': cfg['image_size'], 'min_scale': -0.1, 'max_scale': 1.0, 'do_flip': True}
         train_dataset = FlyingChairs(aug_params, split='training')
     
-    elif args.stage == 'things':
-        aug_params = {'crop_size': args.image_size, 'min_scale': -0.4, 'max_scale': 0.8, 'do_flip': True}
+    elif cfg['stage'] == 'things':
+        aug_params = {'crop_size': cfg['image_size'], 'min_scale': -0.4, 'max_scale': 0.8, 'do_flip': True}
         clean_dataset = FlyingThings3D(aug_params, dstype='frames_cleanpass')
         final_dataset = FlyingThings3D(aug_params, dstype='frames_finalpass')
         train_dataset = clean_dataset + final_dataset
 
-    elif args.stage == 'sintel':
-        aug_params = {'crop_size': args.image_size, 'min_scale': -0.2, 'max_scale': 0.6, 'do_flip': True}
+    elif cfg['stage'] == 'sintel':
+        aug_params = {'crop_size': cfg['image_size'], 'min_scale': -0.2, 'max_scale': 0.6, 'do_flip': True}
         things = FlyingThings3D(aug_params, dstype='frames_cleanpass')
         sintel_clean = MpiSintel(aug_params, split='training', dstype='clean')
         sintel_final = MpiSintel(aug_params, split='training', dstype='final')        
 
         if TRAIN_DS == 'C+T+K+S+H':
-            kitti = KITTI({'crop_size': args.image_size, 'min_scale': -0.3, 'max_scale': 0.5, 'do_flip': True})
-            hd1k = HD1K({'crop_size': args.image_size, 'min_scale': -0.5, 'max_scale': 0.2, 'do_flip': True})
+            kitti = KITTI({'crop_size': cfg['image_size'], 'min_scale': -0.3, 'max_scale': 0.5, 'do_flip': True})
+            hd1k = HD1K({'crop_size': cfg['image_size'], 'min_scale': -0.5, 'max_scale': 0.2, 'do_flip': True})
             train_dataset = 100*sintel_clean + 100*sintel_final + 200*kitti + 5*hd1k + things
 
         elif TRAIN_DS == 'C+T+K/S':
             train_dataset = 100*sintel_clean + 100*sintel_final + things
 
-    elif args.stage == 'kitti':
-        aug_params = {'crop_size': args.image_size, 'min_scale': -0.2, 'max_scale': 0.4, 'do_flip': False}
+    elif cfg['stage'] == 'kitti':
+        aug_params = {'crop_size': cfg['image_size'], 'min_scale': -0.2, 'max_scale': 0.4, 'do_flip': False}
 
-        split = 'training' if args.mode == 'train' else 'testing' 
-        train_dataset = KITTI(aug_params, split=split, root=kitti)
+        split = 'training' if cfg['mode'] == 'train' else 'testing' 
+        train_dataset = KITTI(aug_params, split=split, root=env['kitti'])
 
-    elif args.stage = 'ycb':
-        train_dataset = YCB( **args.params_ycb )
+    elif cfg['stage'] == 'ycb':
+        train_dataset = YCB( **cfg['params_ycb'] )
 
 
-    print(args.loader)
-    train_loader = data.DataLoader(train_dataset, **args.loader, drop_last=True)
+    print(cfg['loader'])
+    train_loader = data.DataLoader(train_dataset, **cfg['loader'], drop_last=True)
 
     print('Training with %d image pairs' % len(train_dataset))
     return train_loader

@@ -1,3 +1,0 @@
-workstation: True
-base: /home/jonfrey/results
-kitti: /home/jonfrey/datasets/kitti

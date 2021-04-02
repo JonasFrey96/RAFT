@@ -20,7 +20,7 @@ if __name__ == "__main__":
     sys.path.append(os.path.join(os.getcwd() + '/lib'))
 
 
-from rotations import quat_to_rot
+from ycb.rotations import quat_to_rot
 
 
 def get_rot_vec(R):
