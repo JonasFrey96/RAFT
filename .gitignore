@@ -1,5 +1,6 @@
 *launch.json
-
+launch.json
+cfg/exp/tmp/*
 *.pyc
 *.egg-info
 dist
