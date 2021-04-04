@@ -1,6 +1,6 @@
 .vscode/launch.json
-launch.json
-cfg/exp/tmp/*
+**launch.json
+**cfg/exp/tmp/*
 *.pyc
 *.egg-info
 dist
