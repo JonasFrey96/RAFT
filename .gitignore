@@ -1,5 +1,3 @@
-.vscode/launch.json
-**launch.json
 **cfg/exp/tmp/*
 *.pyc
 *.egg-info
@@ -9,3 +7,5 @@ pytorch_env
 models
 build
 correlation.egg-info
+cfg/exp/tmp/*
+.vscode/launch.json
