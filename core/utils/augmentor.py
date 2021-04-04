@@ -167,7 +167,7 @@ class SparseFlowAugmentor:
         flow = flow.reshape(-1, 2).astype(np.float32)
         valid = valid.reshape(-1).astype(np.float32)
 
-        coords0 = coords[valid>=1]
+        coords0 = coords[valid>=1] # valid 240000  coords 800,2
         flow0 = flow[valid>=1]
 
         ht1 = int(round(ht * fy))

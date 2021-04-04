@@ -23,11 +23,8 @@ def get_neptune_logger(exp,env,exp_p, env_p, project_name="jonasfrey96/asl"):
           if str(p).find('vscode') == -1]
   files.append( exp_p )
   files.append( env_p )
-    
-  if env['workstation']:
-    t1 = 'workstation'
-  else:
-    t1 = 'leonhard'
+  t1 = os.environ['ENV_WORKSTATION_NAME'] 
+  if not env['workstation']:
     NeptuneLogger._create_or_get_experiment = _create_or_get_experiment2
 
   gpus = 'gpus_'+str(torch.cuda.device_count())

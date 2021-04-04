@@ -1,0 +1,4 @@
+ycb: /cluster/work/riner/users/jonfrey/datasets/ycb
+kitti: /cluster/work/riner/users/jonfrey/datasets/kitti
+base: /cluster/work/riner/users/jonfrey/models/rpose
+workstation: False

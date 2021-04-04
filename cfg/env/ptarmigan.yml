@@ -1,4 +1,4 @@
-ycb: /media/scratch2/jonfrey/ycb/YCB_Video_Dataset
+ycb: /media/scratch2/jonfrey/ycb/
 kitti: /home/jonfrey/datasets/kitti
-base: /home/jonfrey/results
+base: /home/jonfrey/results/rpose
 workstation: True

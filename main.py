@@ -7,7 +7,7 @@ sys.path.append(os.path.join(os.getcwd() + '/core'))
 
 import coloredlogs
 coloredlogs.install()
-
+from collections import OrderedDict
 import time
 import shutil
 import datetime
@@ -61,6 +61,16 @@ if __name__ == "__main__":
   exp = load_yaml(exp_cfg_path)
   env = load_yaml(env_cfg_path)
 
+  # Move YCB Dataset
+  if env['workstation'] == False:
+    print("Moveing datasets")
+    for dataset in exp['move_datasets']: 
+      print(f"Move {dataset}")
+      if local_rank == 0:
+        print("Start Moveing dataset")
+        os.system(f'/cluster/home/jonfrey/miniconda3/envs/track4/bin/python scripts/move_datasets.py --datasets={dataset}')
+      env[dataset] = os.path.join( os.environ.get('TMPDIR'), dataset)
+  
   if local_rank == 0:
     # Set in name the correct model path
     if exp.get('timestamp',True):
@@ -158,23 +168,34 @@ if __name__ == "__main__":
       callbacks=cb_ls,
       logger=logger)   
     
-  # RESTORE WEIGHTS 
+  # RESTORE WEIGHTS
   if exp['weights_restore'] :
     p = os.path.join( env['base'],exp['checkpoint_load'])
     if os.path.isfile( p ):
-      res = model.load_state_dict( torch.load(p,
-        map_location=lambda storage, loc: storage)['state_dict'], 
-        strict=False)
+      try:
+        res = model.load_state_dict( torch.load(p,
+          map_location=lambda storage, loc: storage)['state_dict'], 
+          strict=False)
+      except:
+        # Loading orginal dict
+        state_dict = torch.load(p)
+        new_state_dict = OrderedDict()
+        for key, value in state_dict.items():
+            new_key = key[7:]
+            new_state_dict[new_key] = value
+        res = model.model.load_state_dict( new_state_dict )
+
       print('Restoring weights: ' + str(res))
     else:
       raise Exception('Checkpoint not a file')
   
   
-  dataloader_train = datasets.fetch_dataloader( exp['train_dataset'], env )
-  
+  train_dataloader = datasets.fetch_dataloader( exp['train_dataset'], env )
+  val_dataloader = datasets.fetch_dataloader( exp['val_dataset'], env )
+
   train_res = trainer.fit(model = model,
-                          train_dataloader= dataloader_train,
-                          val_dataloaders= dataloader_train)
+                          train_dataloader= train_dataloader,
+                          val_dataloaders= val_dataloader)
   try:
     logger.experiment.stop()
   except:

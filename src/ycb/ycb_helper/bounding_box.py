@@ -5,6 +5,7 @@ import torch
 
 from .camera import backproject_points_batch, backproject_points, backproject_point
 
+
 class BoundingBox():
     def __init__(self, p1, p2):
         "p1 = u,v  u=height v=widht starting top_left 0,0"
@@ -117,7 +118,7 @@ class BoundingBox():
                 br[1] = max_width
             return tl, br
 
-    def crop(self, img, scale=False, mode='nearest', max_height=480, max_width=640):
+    def crop(self, img, scale=False, mode='nearest', max_height=480, max_width=640, output_h = 480, output_w = 640):
         """
             img: torch.tensor H,W,C
             scale: bool return the Image scaled up to H=480 W=640
@@ -135,9 +136,9 @@ class BoundingBox():
         if scale:
             res = res.permute(2,0,1)[None] #BS C H W
             if mode == 'bilinear':
-                res  = torch.nn.functional.interpolate(res, size=(480,640), mode=mode, align_corners=False)  
+                res  = torch.nn.functional.interpolate(res, size=(output_h,output_w), mode=mode, align_corners=False)  
             else:
-                res  = torch.nn.functional.interpolate(res, size=(480,640), mode=mode)  
+                res  = torch.nn.functional.interpolate(res, size=(output_h,output_w), mode=mode)  
             res = res[0].permute(1,2,0) # H W C
             
         return res

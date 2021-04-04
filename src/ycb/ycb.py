@@ -1,9 +1,13 @@
+
 if __name__ == "__main__":
   import os
-  import sys
+  import sys 
+  os.chdir(os.path.join(os.getenv('HOME'), 'RPOSE'))
   sys.path.insert(0, os.getcwd())
   sys.path.append(os.path.join(os.getcwd() + '/src'))
-  sys.path.append(os.path.join(os.getcwd() + '/lib'))
+  sys.path.append(os.path.join(os.getcwd() + '/core'))
+  
+  print(os.getcwd())
   
 import time
 import random
@@ -35,63 +39,97 @@ from scipy.interpolate import griddata
 import scipy.ndimage as nd
 
 # From costume modules
-from ycb.rotations import re_quat
-from ycb.ycb_helper import ViewpointManager
-from ycb.ycb_helper import get_bb_from_depth, get_bb_real_target
-from ycb.ycb_helper import Augmentation
 from ycb.rotations import *
 
+from ycb.ycb_helper import get_bb_from_depth, get_bb_real_target
+from ycb.ycb_helper import Augmentation
+from ycb.ycb_helper import ViewpointManager
+from ycb.ycb_helper import backproject_points
+
+from utils.augmentor import FlowAugmentor, SparseFlowAugmentor
+import pickle
+from torch import from_numpy as fn
 
 class YCB(torch.utils.data.Dataset):
-  def __init__(self, cfg_d, cfg_env):
-    super(YCB, self).__init__(cfg_d, cfg_env)
+  def __init__(self, root, mode, image_size, cfg_d ):
+    """
+    image_size: Tuple H,W
+    """
     self._cfg_d = cfg_d
-    self._cfg_env = cfg_env
-    self._p_ycb = cfg_env['p_ycb']
     
-    self._pcd_cad_dict, self._name_to_idx, self._name_to_idx_full = self._get_pcd_cad_models()
-    self._batch_list = self._get_batch_list()
-    
+    self._load(mode,root)
+    self._pcd_cad_list = self._get_pcd_cad_models(root)
     self._h = 480
     self._w = 640
     
-    self.output_h = cfg_d['output_h'] 
-    self.output_w = cfg_d['output_w']
+    self._image_size = image_size
     
-    self._aug = Augmentation(add_depth = cfg_d.get('add_depth',False),
-                 output_size=(self.output_h, self.output_w), 
-                 input_size=(self.output_h, self.output_w))
+    self._aug = Augmentation(add_depth= cfg_d.get('add_depth',False),
+                 output_size=image_size, 
+                 input_size=image_size)
     
+    self._flow_augmenter = SparseFlowAugmentor(**cfg_d['aug_params'])
+
     self._num_pt = cfg_d.get('num_points', 1000)
-    self._trancolor_background = transforms.ColorJitter(0.2, 0.2, 0.2, 0.05)
+    
+    self._trancolor_background = transforms.ColorJitter(0.1, 0.1, 0.1, 0.05)
 
-
-    self._min_visible_mask_size = 50
+    self._trancolor = transforms.ColorJitter(0.2, 0.2, 0.2, 0.05)
 
     self._vm = ViewpointManager(
-      store=cfg_env['p_ycb'] + '/viewpoints_renderings',
-      name_to_idx=self._name_to_idx,
+      store=os.path.join(root,'viewpoints_renderings'),
+      name_to_idx= self._names_idx,
       nr_of_images_per_object=2500,
       device='cpu',
       load_images=False)
 
-    self.K_ren = self.get_camera('data_syn/0019', K=True)
-        
-    self._load_background()
-    self._load_flow()
-    self.err = False
-    
-  def load_lists(self):
-    self.path
-    self.obj_idx
-    self.camera_idx
+    self.K = {
+      "1": np.array([[1077.836,0,323.7872],[0,1078.189,279.6921],[0,0,1]]),
+      "0": np.array([[1066.778,0,312.9869],[0,1067.487,241.3109],[0,0,1]]) }
+    self.K_ren = self.K["0"]
 
-    self.images
-    self.labels
-    self.depth
+    self._load_flow(root)
+    self.err = False
+    self._num_pt_cad_model = 2000
+
+  def _load(self, mode, root):
+    with open(f'cfg/datasets/ycb/{mode}.pkl', 'rb') as handle:
+      mappings = pickle.load(handle)
+      self._names_idx = mappings['names_idx']
+      self._idx_names = mappings['idx_names']
+      self._base_path_list = mappings['base_path_list']
+      self._base_path_list = [os.path.join(root,p) for p in self._base_path_list]
+      self._obj_idx_list = mappings['obj_idx_list']
+      self._camera_idx_list = mappings['camera_idx_list']
+      self._length = len( self._base_path_list )
 
   def __getitem__(self, index):
-    return getElement(index, h_real_est=None)
+    return self.getElement(index, h_real_est=None)
+
+
+  def _get_background_image(self, obj_idx):
+    while 1:
+      index = random.randint(0, len(self))
+      p = self._base_path_list[index]
+      if p.find( 'data_syn') != -1:
+        continue
+      meta = scio.loadmat( p+"-meta.mat")
+      obj = meta['cls_indexes'].flatten().astype(np.int32)
+      if not obj_idx in obj:
+        break 
+    
+    img = Image.open(p+"-color.png").convert("RGB")
+    w, h = img.size
+    w_g, h_g = 640, 480
+    if w / h < w_g / h_g:
+      h = int(w * h_g / w_g)
+    else:
+      w = int(h * w_g / h_g)
+    crop = transforms.CenterCrop((h, w))
+    img = crop(img)
+    img = img.resize((w_g, h_g))
+    return np.array(self._trancolor_background(img))
+     
 
   def getElement(self, index, h_real_est=None):
     """
@@ -99,14 +137,21 @@ class YCB(torch.utils.data.Dataset):
     two problems we face. What is if an object is not visible at all -> meta['obj'] = None
     obj_idx is elemnt 1-21 !!!
     """
-    p = self.path[index]
+    c = 0
+    for p in self._base_path_list:
+      if p.find('syn') != 0:
+        c +=1 
+
+
+    p = self._base_path_list[index]
+    obj_idx = self._obj_idx_list[index]
+    K = self.K[str(self._camera_idx_list[index])]
     synthetic = p.find('syn') != -1
+
     img = Image.open(p+"-color.png")
     depth = np.array( Image.open( p+"-depth.png") )
     label = np.array( Image.open( p+"-label.png") )
     meta = scio.loadmat( p+"-meta.mat")
-    obj_idx = self.obj_idx[index]
-    K = self.get_camera( self.camera_idx[index] )
 
     obj = meta['cls_indexes'].flatten().astype(np.int32)
     obj_idx_in_list = int(np.argwhere(obj == obj_idx))
@@ -114,62 +159,91 @@ class YCB(torch.utils.data.Dataset):
     h_gt = np.eye(4)
     h_gt[:3,:4] =  meta['poses'][:, :, obj_idx_in_list]   
 
-    if synthetic:      
+    if synthetic:    
       img_arr = np.array( img )[:,:,:3] 
-      background_img = self._get_background_image()  
+      background_img = self._get_background_image(obj_idx)
       mask = label == 0
       img_arr[mask] = background_img[mask]
     else:
       img_arr = np.array(img)[:,:,:3]
    
-    # if self._cfg_d['output_cfg'].get('add_random_image_as_noise',False):
-    #   noise_img = self._get_background_image()
-    #   img_arr = img_arr +  ( noise_img - img_arr.mean((0,1))) * 0.025
-    
-    dellist = [j for j in range(0, len(self._pcd_cad_dict[obj_idx]))]
+
+    dellist = [j for j in range(0, len(self._pcd_cad_list[obj_idx-1]))]
     dellist = random.sample(dellist, len(
-      self._pcd_cad_dict[obj_idx]) - self._num_pt_mesh_large)
-    model_points = np.delete(self._pcd_cad_dict[obj_idx], dellist, axis=0).astype(np.float32)
-    cam_flag = self.get_camera(desig,K=False,idx=True)
+      self._pcd_cad_list[obj_idx-1]) - self._num_pt_cad_model)
+    model_points = np.delete(self._pcd_cad_list[obj_idx-1], dellist, axis=0).astype(np.float32)
     
-    # get rendered data
-    res_get_render = self.get_rendered_data( img_arr, depth, label, model_points, int(obj_idx), K_cam, cam_flag, h_gt, h_real_est)
+    cam_flag = self._camera_idx_list[index]
+    
+    res_get_render = self.get_rendered_data( img_arr, depth, label, model_points, int(obj_idx), K, cam_flag, h_gt, h_real_est)
     if res_get_render is False:
       if self.err:
         print("Violation in get render data")
-      return False
+      new_idx = random.randint(0, len(self))
+      return self[new_idx]
     
     idx = torch.LongTensor([int(obj_idx) - 1])
-    # augment data
-    data, uv, flow_mask, gt_label_cropped, non_norm_real_img, non_norm_render_img = \
-      self._aug.apply( idx = idx, 
-              u_map = res_get_render[5], 
-              v_map = res_get_render[6], 
-              flow_mask = res_get_render[7],
-              gt_label_cropped = res_get_render[4],
-              real_img = res_get_render[0], 
-              render_img = res_get_render[1],
-              real_d = res_get_render[2], 
-              render_d = res_get_render[3] 
-              )
-    output = (
-      unique_desig, 
-      idx, 
-      data, 
-      uv, 
-      flow_mask,
-      gt_label_cropped, 
-      non_norm_real_img, 
-      non_norm_render_img,
-      res_get_render[3], # render_d
-      res_get_render[8], # bb
-      res_get_render[9], # h_render
-      res_get_render[11], # h_gt
-      res_get_render[10], # h_init 
-      res_get_render[12], # K_real
-      torch.from_numpy(model_points), # model_points
-    )
-    return output
+    
+    flow = torch.cat( [res_get_render[5][:,:,None],res_get_render[6][:,:,None]], dim=2 )
+    
+    real = res_get_render[0]
+    render = res_get_render[1]
+    
+    # AUGMENTATION
+    real = (self._trancolor( real.permute(2,0,1)/255 )*255)
+    render = (self._trancolor( render.permute(2,0,1)/255 )*255) #.type(torch.uint8)
+
+    # TEMPLATE INTERFACE
+    flow = flow.numpy().astype(np.float32) #H,W,
+    # img1 = np.array(real).astype(np.uint8) #H,W,C
+    # img2 = np.array(render).astype(np.uint8) #H,W,C
+    valid = res_get_render[7].numpy().astype(np.float32)
+
+    # img1, img2, flow, valid = self._flow_augmenter(img1, img2, flow, valid)
+
+    if valid is not None:
+      valid = torch.from_numpy(valid)
+    else:
+      valid = (flow[0].abs() < 1000) & (flow[1].abs() < 1000)
+    
+    
+    # img1 = fn(img1).permute(2,0,1)
+    # img2 = fn(img2).permute(2,0,1)
+    flow = fn(flow).permute(2,0,1)
+    
+    return real, render, flow, valid.float()
+    
+    
+    # # augment data
+    # data, uv, flow_mask, gt_label_cropped, non_norm_real_img, non_norm_render_img = \
+    #   self._aug.apply( idx = idx, 
+    #           u_map = res_get_render[5], 
+    #           v_map = res_get_render[6], 
+    #           flow_mask = res_get_render[7],
+    #           gt_label_cropped = res_get_render[4],
+    #           real_img = res_get_render[0], 
+    #           render_img = res_get_render[1],
+    #           real_d = res_get_render[2], 
+    #           render_d = res_get_render[3] 
+    #           )
+    # output = (
+    #   unique_desig, 
+    #   idx, 
+    #   data, 
+    #   uv, 
+    #   flow_mask,
+    #   gt_label_cropped, 
+    #   non_norm_real_img, 
+    #   non_norm_render_img,
+    #   res_get_render[3], # render_d
+    #   res_get_render[8], # bb
+    #   res_get_render[9], # h_render
+    #   res_get_render[11], # h_gt
+    #   res_get_render[10], # h_init 
+    #   res_get_render[12], # K_real
+    #   torch.from_numpy(model_points), # model_points
+    # )
+    # return output
 
   def get_rendered_data(self, img, depth_real, label, model_points, obj_idx, K_real, cam_flag, h_gt, h_real_est=None):
     """Get Rendered Data
@@ -199,24 +273,25 @@ class YCB(torch.utils.data.Dataset):
     h = self._h
     w = self._w
 
-    output_h = self.output_h
-    output_w = self.output_w        
-    
+    output_h = self._image_size[0]
+    output_w = self._image_size[1]
+
     if not  ( h_real_est is None ): 
       h_init = h_real_est
     else:
       nt = self._cfg_d['output_cfg'].get('noise_translation', 0.02) 
       nr = self._cfg_d['output_cfg'].get('noise_rotation', 30) 
       h_init = add_noise( h_gt, nt, nr)
-      
+        
     # transform points
+    rot = R.from_euler('z', 180, degrees=True).as_matrix()
     pred_points = (model_points @ h_init[:3,:3].T) + h_init[:3,3]
 
-    init_rot_wxyz = torch.tensor( re_quat( R.from_matrix(h_init[:3,:3]).as_quat(), 'xyzw') )
+    init_rot_wxyz = re_quat( torch.from_numpy( R.from_matrix(h_init[:3,:3]).as_quat()), 'xyzw')
     idx = torch.LongTensor([int(obj_idx) - 1])
 
     img_ren, depth_ren, h_render = self._vm.get_closest_image_batch(
-      i=idx[None], rot=init_rot_wxyz[None,:], conv='wxyz')
+      i=idx[None], rot=init_rot_wxyz, conv='wxyz')
 
     # rendered data BOUNDING BOX Computation
     bb_lsd = get_bb_from_depth(depth_ren)
@@ -252,6 +327,7 @@ class YCB(torch.utils.data.Dataset):
     center_real = backproject_points(
       torch.from_numpy( h_init[:3,3][None] ), K=K_real)
     center_real = center_real.squeeze()
+    
     b_real.move(-center_real[0], -center_real[1])
     b_real.expand(1.1)
     b_real.expand_to_correct_ratio(w, w)
@@ -262,6 +338,8 @@ class YCB(torch.utils.data.Dataset):
     real_img = b_real.crop(torch.from_numpy(img).type(torch.float32) , 
                  scale=True, mode="bilinear",
                  output_h = output_h, output_w = output_w)
+    
+    
     
     real_d = b_real.crop(torch.from_numpy(depth_real[:, :,None]).type(
       torch.float32), scale=True, mode="nearest",
@@ -323,7 +401,8 @@ class YCB(torch.utils.data.Dataset):
   def _get_flow_fast(self, h_render, h_real, idx, label_img, cam, b_real, b_ren, K_real, render_d, output_h, output_w):
     m_real = copy.deepcopy(self._mesh[idx])
     m_real = transform_mesh(m_real, h_real)
-
+    
+    
     rmi_real = RayMeshIntersector(m_real)
     tl, br = b_real.limit_bb()
     rays_origin_real = self._rays_origin_real[cam]  [int(tl[0]): int(br[0]), int(tl[1]): int(br[1])]
@@ -341,11 +420,17 @@ class YCB(torch.utils.data.Dataset):
     uv_ren = backproject_points_np(ren_locations, K=self.K_ren)
     index_the_depth_map = np.round( uv_ren )
     
-    
-    new_tensor = render_d[ index_the_depth_map[:,0], index_the_depth_map[:,1] ] / 10000
-    distance_depth_map_to_model = torch.abs( new_tensor[:] - torch.from_numpy( ren_locations[:,2])  )
-    
-    valid_points_for_flow = (distance_depth_map_to_model < 0.01).numpy()
+    val = (index_the_depth_map[:,0] < 480) * (index_the_depth_map[:,0] >= 0)
+    val2 = (index_the_depth_map[:,1] < 640) * (index_the_depth_map[:,1] >= 0)
+
+    v = val * val2
+
+    new_tensor = render_d[ index_the_depth_map[v,0], index_the_depth_map[v,1] ] / 10000
+    distance_depth_map_to_model = torch.abs( new_tensor[:] - torch.from_numpy( ren_locations[v,2])  )
+    not_val = (distance_depth_map_to_model > 0.01)
+    valid_points_for_flow = v
+    valid_points_for_flow[v==True][not_val] = False
+
     uv_real =  backproject_points_np(real_locations, K=K_real) 
     
     valid_flow_index = uv_real[valid_points_for_flow].astype(np.uint32)
@@ -382,69 +467,25 @@ class YCB(torch.utils.data.Dataset):
 
     f_3 = valid_flow
     f_3 *= label_img == idx
-    
     return u_map, v_map, f_3, torch.tensor( real_tl, dtype=torch.int32) , torch.tensor( real_br, dtype=torch.int32) , torch.tensor( ren_tl, dtype=torch.int32) , torch.tensor( ren_br, dtype=torch.int32 ) 
 
-  def _load_background(self):
-    # if self._cfg_d['output_cfg'].get('better_background', False):
-    self.background = [ '{0}/{1}/{2}'.format(self._p_ycb, b[1],b[2][0]) for b in self._batch_list]
-    self.background = [ p for p in self.background if p.find('data_syn') == -1]
-    # else:
-    #   p = self._cfg_env['p_background']
-    #   self.background = [str(p) for p in Path(p).rglob('*.jpg')]
-  
-  def _get_background_image(self, obj_target_index):
-    # RANDOMLY SELECT IMAGE THAT DOSENT CONTATIN obj_target_index
-    while True:
-      p = random.choice(self.background)
-      meta = scio.loadmat( p+"-meta.mat")
-      obj = meta['cls_indexes'].flatten().astype(np.int32)
-      if not obj_target_index in obj:
-        break 
-    
-    img = Image.open(p+"-color.png").convert("RGB")
-    w, h = img.size
-    w_g, h_g = 640, 480
-    if w / h < w_g / h_g:
-      h = int(w * h_g / w_g)
-    else:
-      w = int(h * w_g / h_g)
-    crop = transforms.CenterCrop((h, w))
-    img = crop(img)
-    img = img.resize((w_g, h_g))
-    return np.array(self._trancolor_background(img))
+  def __len__(self):
+    return self._length
 
-
-  def get_camera(self, idx):
-    if idx == 0:
-      cx = 323.7872
-      cy = 279.6921
-      fx = 1077.836
-      fy = 1078.189
-    else:
-      cx = 312.9869
-      cy = 241.3109
-      fx = 1066.778
-      fy = 1067.487
-    return np.array([[fx,0,cx],[0,fy,cy],[0,0,1]])
-
-  def _load_flow(self):
+  def _load_flow(self,root):
     self._load_rays_dir() 
-    self._load_meshes()
+    self._load_meshes(root)
 
     self._max_matches = self._cfg_d.get('flow_cfg', {}).get('max_matches',1500)
     self._max_iterations =  self._cfg_d.get('flow_cfg', {}).get('max_iterations',10000)
     self._grid_x, self._grid_y = np.mgrid[0:self._h, 0:self._w]
 
   def _load_rays_dir(self): 
-    K1 = self.get_camera('data_syn/000001', K=True)
-    K2 = self.get_camera('data/0068/000001',  K=True)
-    
     self._rays_origin_real = []
     self._rays_origin_render = []
     self._rays_dir = []
     
-    for K in [K1,K2]:
+    for K in [self.K["0"],self.K["1"]]:
       u_cor = np.arange(0,self._h,1)
       v_cor = np.arange(0,self._w,1)
       K_inv = np.linalg.inv(K)
@@ -465,48 +506,22 @@ class YCB(torch.utils.data.Dataset):
       self._rays_origin_render.append( np.swapaxes(rays_origin_render,0,1) )
       self._rays_dir.append( np.swapaxes( rays_dir,0,1) )
 
-  def _load_meshes(self):
-    p = self._p_ycb + '/models'
+  def _load_meshes(self,root):
+    p = os.path.join( root , 'models')
     cad_models = [str(p) for p in Path(p).rglob('*scaled.obj')] #textured
     self._mesh = {}
     for pa in cad_models:
-      try:
-        idx = self._name_to_idx[pa.split('/')[-2]]
-        self._mesh[ idx ] = trimesh.load(pa)
-      except:
-        pass
+      idx = self._names_idx[pa.split('/')[-2]]
+      self._mesh[ idx ] = trimesh.load(pa)
 
-  def _get_pcd_cad_models(self):
-    p = self._cfg_env['p_ycb_obj']
-    class_file = open(p)
+  def _get_pcd_cad_models(self,root):
     cad_paths = []
-    obj_idx = 1
+    for n in self._names_idx.keys():
+      cad_paths.append( root + '/models/' + n )
 
-    name_to_idx = {}
-    name_to_idx_full = {}
-    while 1:
-      class_input = class_file.readline()
-      if not class_input:
-        break
-      name_to_idx_full[class_input[:-1]] = obj_idx
-      if self._obj_list_fil is not None:
-        if obj_idx in self._obj_list_fil:
-          cad_paths.append(
-            self._cfg_env['p_ycb'] + '/models/' + class_input[:-1])
-          name_to_idx[class_input[:-1]] = obj_idx
-      else:
-        cad_paths.append(
-          self._cfg_env['p_ycb'] + '/models/' + class_input[:-1])
-        name_to_idx[class_input[:-1]] = obj_idx
-
-      obj_idx += 1
-
-    if len(cad_paths) == 0:
-      raise AssertionError
-
-    cad_dict = {}
-
-    for path in cad_paths:
+    
+    cad_list = []
+    for path, names in zip( cad_paths, list(self._names_idx.keys()) ):
       input_file = open(
         '{0}/points.xyz'.format(path))
 
@@ -518,10 +533,10 @@ class YCB(torch.utils.data.Dataset):
         input_line = input_line[:-1].split(' ')
         cld.append([float(input_line[0]), float(
           input_line[1]), float(input_line[2])])
-      cad_dict[name_to_idx[path.split('/')[-1]]] = np.array(cld)
+      cad_list.append( np.array(cld) )
       input_file.close()
 
-    return cad_dict, name_to_idx, name_to_idx_full
+    return cad_list
 
 def transform_mesh(mesh, H):
   """ directly operates on mesh and does not create a copy!"""
@@ -532,8 +547,6 @@ def transform_mesh(mesh, H):
   return mesh
 
 def rel_h (h1,h2):
-  'Input numpy arrays'
-  from pytorch3d.transforms import so3_relative_angle
   return so3_relative_angle(torch.tensor( h1 ) [:3,:3][None], torch.tensor( h2 ) [:3,:3][None])
   
 def add_noise(h, nt = 0.01, nr= 30):
@@ -577,21 +590,3 @@ def backproject_points_np(p, fx=None, fy=None, cx=None, cy=None, K=None):
   u = ((p[:, 0] / p[:, 2]) * fx) + cx
   v = ((p[:, 1] / p[:, 2]) * fy) + cy
   return np.stack([v, u]).T  
-
-
-def test():
-  import os 
-  import sys
-  sys.path.insert(0, os.getcwd())
-  sys.path.append(os.path.join(os.getcwd() + '/src'))
-  sys.path.append(os.path.join(os.getcwd() + '/lib'))
-  def load_yaml(path):
-    with open(path) as file:  
-      res = yaml.load(file, Loader=yaml.FullLoader)
-      return res
-  cfg_env = load_yaml('/home/jonfrey/PLR3/yaml/env/env_natrix_jonas.yml')
-
-
-
-if __name__ == "__main__":
-  test()

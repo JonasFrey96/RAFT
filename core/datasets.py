@@ -78,6 +78,10 @@ class FlowDataset(data.Dataset):
 
         if self.augmentor is not None:
             if self.sparse:
+                # img 375,1242,3 , uint,
+                # flow H,W,2  , float32 max 360
+                # valid H,W , float32 0.0 and 1.0
+
                 img1, img2, flow, valid = self.augmentor(img1, img2, flow, valid)
             else:
                 img1, img2, flow = self.augmentor(img1, img2, flow)
@@ -234,7 +238,7 @@ def fetch_dataloader(cfg, env, TRAIN_DS='C+T+K+S+H'):
         train_dataset = KITTI(aug_params, split=split, root=env['kitti'])
 
     elif cfg['stage'] == 'ycb':
-        train_dataset = YCB( **cfg['params_ycb'] )
+        train_dataset = YCB( root = env['ycb'], mode = cfg['mode'], image_size = cfg['image_size'], cfg_d = cfg['cfg_ycb'] )
 
 
     print(cfg['loader'])
