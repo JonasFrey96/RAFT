@@ -10,3 +10,5 @@ build
 correlation.egg-info
 cfg/exp/tmp/*
 .vscode/launch.json
+cfg/exp/cluster/exp.yml
+cfg/exp/tmp/exp.yml
