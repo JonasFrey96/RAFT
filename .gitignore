@@ -1,6 +1,7 @@
-**cfg/exp/tmp/*
+cfg/exp/tmp/*
 *.pyc
 *.egg-info
+cfg/exp/*/*
 dist
 datasets
 pytorch_env
