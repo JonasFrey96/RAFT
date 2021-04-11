@@ -164,7 +164,8 @@ else:
       cmd += f"""/cluster/home/jonfrey/miniconda3/envs/track4/bin/python main.py --exp={e}"""  
       cmd = cmd.replace('\n', '')
       t = ""
-      cmd = """source /cluster/apps/local/env2lmod.sh && module purge && module load gcc/6.3.0 && module load hdf5 eth_proxy python_gpu/3.8.5 && cd $HOME/RPOSE && """ + cmd
+      # python_gpu/3.8.5 
+      cmd = """source /cluster/apps/local/env2lmod.sh && module purge && module load gcc/6.3.0 && module load hdf5 eth_proxy cudnn/8.0.5 cuda/11.0.3 && cd $HOME/RPOSE && """ + cmd
       print(cmd)
       # cmd = "echo $MODELS"
       logging.info(f'   {j}-Command: {cmd}')

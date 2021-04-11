@@ -1,12 +1,14 @@
-name: debug/overfitt_batches
+name: 4gpus/fast_lr_load_kittickpt
 neptune_project_name: rpose
 offline_mode: false
 timestamp: true
-weights_restore: true
-
+weights_restore: false
+weights_restore2: true
 checkpoint_restore: false
-checkpoint_load: models/raft-kitti.pth
-lr: 0.0001
+checkpoint_load: models/kitti.ckpt
+
+mode: train
+lr: 0.0005
 tag_list:
   - flow_estimation
 
@@ -34,30 +36,23 @@ trainer:
   precision: 16
   accumulate_grad_batches: 1
   fast_dev_run: false
-  limit_train_batches: 10
-  limit_val_batches: 10
+  limit_train_batches: 2500
+  limit_val_batches: 250
   limit_test_batches: 1.0
-  progress_bar_refresh_rate: 1
+  progress_bar_refresh_rate: 10
   max_epochs: 1000
   gpus: -1
   num_sanity_val_steps: 0
   check_val_every_n_epoch: 1
   profiler: False
-  # overfit_batches: 10
+  accelerator: ddp
 
 model:
   name: RPOSE
   args:
-    hello: TEST
     small: False
-    # hidden_dim: 5
-    # context_dim: 5
-    # dropout: 0.1
-    # alternate_corr: 5
-    # corr_radius: 5
-    # corr_levels: 5
   gamma: 0.85
-  iters: 12
+  iters: 2
 
 cb_early_stopping:
   active: false
@@ -95,13 +90,13 @@ train_dataset:
        max_scale: 0.4
        do_flip: True
     output_cfg:
-      noise_translation: 0.02
-      noise_rotation: 30  
+      noise_translation: 0.01
+      noise_rotation: 45 
   loader:
     pin_memory: true
-    batch_size: 4
+    batch_size: 5
     shuffle: true
-    num_workers: 1
+    num_workers: 4
 
 val_dataset:
   stage: ycb
@@ -118,14 +113,36 @@ val_dataset:
        max_scale: 0.4
        do_flip: True
     output_cfg:
-      noise_translation: 0.02
-      noise_rotation: 30    
+      noise_translation: 0.01
+      noise_rotation: 45   
   loader:
     pin_memory: true
-    batch_size: 4
+    batch_size: 5
     shuffle: false
-    num_workers: 1
+    num_workers: 4
 
+test_dataset:
+  stage: ycb
+  image_size:
+    - 480
+    - 640
+  mode: test
+  cfg_ycb:
+    aug_params:
+       crop_size:
+       - 480
+       - 640
+       min_scale: -0.2
+       max_scale: 0.4
+       do_flip: True
+    output_cfg:
+      noise_translation: 0.01
+      noise_rotation: 45  
+  loader:
+    pin_memory: true
+    batch_size: 5
+    shuffle: true
+    num_workers: 4
 
 # train_dataset:
 #   stage: kitti
@@ -155,7 +172,5 @@ lr_monitor:
   cfg:
     logging_interval: step
 
-# IGNORE AT THE MOMENT
 move_datasets:
-- kitti
 - ycb

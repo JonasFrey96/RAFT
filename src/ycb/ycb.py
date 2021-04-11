@@ -109,7 +109,7 @@ class YCB(torch.utils.data.Dataset):
 
   def _get_background_image(self, obj_idx):
     while 1:
-      index = random.randint(0, len(self))
+      index = random.randint(0, len(self)-1)
       p = self._base_path_list[index]
       if p.find( 'data_syn') != -1:
         continue
@@ -353,7 +353,9 @@ class YCB(torch.utils.data.Dataset):
                    label, cam_flag, b_real, 
                    b_ren, K_real, depth_ren[0],
                    output_h, output_w)
-    
+    if flow is False:
+      return False
+
     
     valid_flow_mask_cropped =  b_real.crop(  torch.from_numpy( flow[2][:,:,None]).type(
       torch.float32), scale=True, mode="nearest",
@@ -424,12 +426,17 @@ class YCB(torch.utils.data.Dataset):
     val2 = (index_the_depth_map[:,1] < 640) * (index_the_depth_map[:,1] >= 0)
 
     v = val * val2
+    if v.sum() < 10:
+      return False
 
     new_tensor = render_d[ index_the_depth_map[v,0], index_the_depth_map[v,1] ] / 10000
     distance_depth_map_to_model = torch.abs( new_tensor[:] - torch.from_numpy( ren_locations[v,2])  )
     not_val = (distance_depth_map_to_model > 0.01)
+    
     valid_points_for_flow = v
-    valid_points_for_flow[v==True][not_val] = False
+    
+    if not_val.sum() != 0: 
+      valid_points_for_flow[v==True][not_val] = False
 
     uv_real =  backproject_points_np(real_locations, K=K_real) 
     

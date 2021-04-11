@@ -17,7 +17,7 @@ def move_datasets(datasets):
   if env['workstation'] == False:
     # use proxy hack for neptunai !!!
     # move data to ssd
-    for dataset in args.datasets:
+    for dataset in datasets:
       st =time.time()
       scratchdir = os.getenv('TMPDIR')
       print( 'TMPDIR directory: ', scratchdir )

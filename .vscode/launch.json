@@ -13,6 +13,15 @@
 			"cwd": "/home/jonfrey/RPOSE",
 			"python.pythonPath": "/home/jonfrey/miniconda3/envs/track4/bin/python",
 			"envFile": "/home/jonfrey/RPOSE/cfg/debug/debug.env"
+		},
+		{
+			"name": "CL",
+			"type": "python",
+			"request": "launch",
+			"program": "/home/jonfrey/CL/train.py",
+			"console": "integratedTerminal",
+			"cwd": "/home/jonfrey/CL",
+			"python.pythonPath": "/home/jonfrey/miniconda3/envs/track4/bin/python",
 		}
 	]
 }

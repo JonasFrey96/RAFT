@@ -88,7 +88,7 @@ class Network(LightningModule):
     
     self._mode = 'train'
     self._logged_images = {'train': 0, 'val': 0, 'test': 0}
-    self._logged_images_max = {'train': 2, 'val': 2, 'test': 2}
+    self._logged_images_max = {'train': 2, 'val': 2, 'test': 50}
     self._type = torch.float16 if exp['trainer'].get('precision',32) == 16 else torch.float32
     self._visu = Visualizer( os.path.join ( exp['name'], "visu") )
     # p_visu, writer=None, num_classes=20, epoch=0, store=True
@@ -113,6 +113,8 @@ class Network(LightningModule):
     for k in self._logged_images.keys():
       self._logged_images[k] = 0
     self._visu.epoch = self.trainer.current_epoch
+    self.log ( "current_epoch", self.trainer.current_epoch )
+    self.log ( "gloabal_step", self.trainer.global_step )
           
   def training_step(self, batch, batch_idx):
     """
@@ -130,7 +132,7 @@ class Network(LightningModule):
 
     loss, metrics = sequence_loss(flow_predictions, flow, valid, self._exp['model']['gamma'])
 
-    self.log(f'{self._mode}_epe', metrics['epe'], on_step=True, on_epoch=True)
+    self.log(f'{self._mode}_epe', metrics['epe'], on_step=True, on_epoch=True, prog_bar=True)
     return {'loss': loss, 'pred': flow_predictions, 'target': flow}
   
   def plot(self, flow_gt, flow_pred, img1, img2, valid ):
@@ -171,6 +173,20 @@ class Network(LightningModule):
   def validation_epoch_end(self, outputs):
     pass
 
+  def test_step(self, batch, batch_idx, dataloader_idx=0):      
+    outputs = self.training_step(batch, batch_idx)
+    return outputs
+  
+  def test_step_end( self, outputs ):
+    self.log('test_loss', outputs['loss'], on_step=True, on_epoch=True, prog_bar=True, sync_dist=True, sync_dist_op=None)
+  
+  def on_test_epoch_start(self):
+    self._mode = 'test'
+  
+  def test_epoch_end(self, outputs):
+    pass
+
+
   def configure_optimizers(self):
     if self._exp['optimizer']['name'] == 'ADAM':
       optimizer = torch.optim.Adam(
@@ -189,14 +205,14 @@ class Network(LightningModule):
       if self._exp['lr_scheduler']['name'] == 'POLY':
         #polynomial lr-scheduler
         init_lr = self.hparams['lr']
-        max_epochs = self._exp['lr_scheduler']['cfg']['max_epochs'] 
-        target_lr = self._exp['lr_scheduler']['cfg']['target_lr'] 
-        power = self._exp['lr_scheduler']['cfg']['power'] 
+        max_epochs = self._exp['lr_scheduler']['poly_cfg']['max_epochs'] 
+        target_lr = self._exp['lr_scheduler']['poly_cfg']['target_lr'] 
+        power = self._exp['lr_scheduler']['poly_cfg']['power'] 
         lambda_lr= lambda epoch: (((max_epochs-min(max_epochs,epoch) )/max_epochs)**(power) ) + (1-(((max_epochs -min(max_epochs,epoch))/max_epochs)**(power)))*target_lr/init_lr
         scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda_lr, last_epoch=-1, verbose=True)
       elif self._exp['lr_scheduler']['name'] == 'OneCycleLR':
         num_steps = self._exp['lr_scheduler']['onecyclelr_cfg']['num_steps']
-        scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, self.hparams['lr'], num_steps+100,
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr = self.hparams['lr'], total_steps = num_steps+100,
         pct_start=0.05, cycle_momentum=False, anneal_strategy='linear')
 
       ret = [optimizer], [scheduler]

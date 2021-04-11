@@ -54,7 +54,7 @@ if __name__ == "__main__":
 
 
   if local_rank != 0:
-    print(init, local_rank)
+    print( local_rank )
     rm = exp_cfg_path.find('cfg/exp/') + len('cfg/exp/')
     exp_cfg_path = os.path.join( exp_cfg_path[:rm],'tmp/',exp_cfg_path[rm:])
   
@@ -62,7 +62,7 @@ if __name__ == "__main__":
   env = load_yaml(env_cfg_path)
 
   # Move YCB Dataset
-  if env['workstation'] == False:
+  if env['workstation'] == False and type(exp['move_datasets']) == list:
     print("Moveing datasets")
     for dataset in exp['move_datasets']: 
       print(f"Move {dataset}")
@@ -95,7 +95,7 @@ if __name__ == "__main__":
     exp['name'] = model_path
   else:
     # the correct model path has already been written to the yaml file.
-    model_path = os.path.join( exp['name'], f'rank_{local_rank}_{task_nr}')
+    model_path = os.path.join( exp['name'], f'rank_{local_rank}')
     # Create the directory
     Path(model_path).mkdir(parents=True, exist_ok=True)
 
@@ -105,7 +105,7 @@ if __name__ == "__main__":
     print( f'Set GPU Count for Trainer to {nr}!' )
     for i in range(nr):
       print( f"Device {i}: ", torch.cuda.get_device_name(i) )
-    exp['trainer']['gpus'] = -1
+    exp['trainer']['gpus'] = nr
 
   model = Network(exp=exp, env=env)
   
@@ -167,16 +167,24 @@ if __name__ == "__main__":
       default_root_dir=model_path,
       callbacks=cb_ls,
       logger=logger)   
-    
-  # RESTORE WEIGHTS
-  if exp['weights_restore'] :
+    # WEIGHTS
+  if exp.get('weights_restore2',False):
     p = os.path.join( env['base'],exp['checkpoint_load'])
     if os.path.isfile( p ):
-      try:
+      res = torch.load( p )
+      out = model.load_state_dict( res['state_dict'], 
+              strict=True)
+      print( "Restoere weights from ckpts")
+              
+  # RESTORE WEIGHTS
+  if exp['weights_restore']:
+    p = os.path.join( env['base'],exp['checkpoint_load'])
+    if os.path.isfile( p ):
+      if p.find("models/raft-kitti.pth") == -1:
         res = model.load_state_dict( torch.load(p,
           map_location=lambda storage, loc: storage)['state_dict'], 
           strict=False)
-      except:
+      else:      
         # Loading orginal dict
         state_dict = torch.load(p)
         new_state_dict = OrderedDict()
@@ -184,18 +192,23 @@ if __name__ == "__main__":
             new_key = key[7:]
             new_state_dict[new_key] = value
         res = model.model.load_state_dict( new_state_dict )
-
       print('Restoring weights: ' + str(res))
     else:
       raise Exception('Checkpoint not a file')
   
-  
-  train_dataloader = datasets.fetch_dataloader( exp['train_dataset'], env )
-  val_dataloader = datasets.fetch_dataloader( exp['val_dataset'], env )
-
-  train_res = trainer.fit(model = model,
+  if exp.get("mode","train") == "train":
+    train_dataloader = datasets.fetch_dataloader( exp['train_dataset'], env )
+    val_dataloader = datasets.fetch_dataloader( exp['val_dataset'], env )
+    train_res = trainer.fit(model = model,
                           train_dataloader= train_dataloader,
                           val_dataloaders= val_dataloader)
+
+  elif exp.get("mode","train") == "test":
+    test_dataloader = datasets.fetch_dataloader( exp['test_dataset'], env )
+    trainer.test(model = model,
+        test_dataloaders = test_dataloader,
+        ckpt_path =os.path.join( env['base'],exp['checkpoint_load']) )
+          
   try:
     logger.experiment.stop()
   except:
