@@ -55,6 +55,8 @@ class YCB(torch.utils.data.Dataset):
     """
     image_size: Tuple H,W
     """
+    self.estimate_pose = False
+
     self._cfg_d = cfg_d
     
     self._load(mode,root)
@@ -130,6 +132,13 @@ class YCB(torch.utils.data.Dataset):
     img = img.resize((w_g, h_g))
     return np.array(self._trancolor_background(img))
      
+  def deterministic_random_shuffel(self):
+    torch.manual_seed(42)
+    idx = torch.randperm( len(self._base_path_list) ).numpy()
+    self._base_path_list = np.array(self._base_path_list)[idx].tolist()
+    self._obj_idx_list =  np.array(self._obj_idx_list)[idx].tolist()
+    self._camera_idx_list = np.array(self._camera_idx_list)[idx].tolist()
+    print("Shuffeld the dataset")
 
   def getElement(self, index, h_real_est=None):
     """
@@ -195,8 +204,6 @@ class YCB(torch.utils.data.Dataset):
 
     # TEMPLATE INTERFACE
     flow = flow.numpy().astype(np.float32) #H,W,
-    # img1 = np.array(real).astype(np.uint8) #H,W,C
-    # img2 = np.array(render).astype(np.uint8) #H,W,C
     valid = res_get_render[7].numpy().astype(np.float32)
 
     # img1, img2, flow, valid = self._flow_augmenter(img1, img2, flow, valid)
@@ -205,45 +212,21 @@ class YCB(torch.utils.data.Dataset):
       valid = torch.from_numpy(valid)
     else:
       valid = (flow[0].abs() < 1000) & (flow[1].abs() < 1000)
-    
-    
-    # img1 = fn(img1).permute(2,0,1)
-    # img2 = fn(img2).permute(2,0,1)
+
     flow = fn(flow).permute(2,0,1)
     
-    return real, render, flow, valid.float()
-    
-    
-    # # augment data
-    # data, uv, flow_mask, gt_label_cropped, non_norm_real_img, non_norm_render_img = \
-    #   self._aug.apply( idx = idx, 
-    #           u_map = res_get_render[5], 
-    #           v_map = res_get_render[6], 
-    #           flow_mask = res_get_render[7],
-    #           gt_label_cropped = res_get_render[4],
-    #           real_img = res_get_render[0], 
-    #           render_img = res_get_render[1],
-    #           real_d = res_get_render[2], 
-    #           render_d = res_get_render[3] 
-    #           )
-    # output = (
-    #   unique_desig, 
-    #   idx, 
-    #   data, 
-    #   uv, 
-    #   flow_mask,
-    #   gt_label_cropped, 
-    #   non_norm_real_img, 
-    #   non_norm_render_img,
-    #   res_get_render[3], # render_d
-    #   res_get_render[8], # bb
-    #   res_get_render[9], # h_render
-    #   res_get_render[11], # h_gt
-    #   res_get_render[10], # h_init 
-    #   res_get_render[12], # K_real
-    #   torch.from_numpy(model_points), # model_points
-    # )
-    # return output
+    if self.estimate_pose:
+
+      h_render = res_get_render[9] # 4,4
+      h_init = res_get_render[10] # 4,4
+      bb = res_get_render[8] 
+      K_real = res_get_render[-3] # 3,3
+      K_ren = self.K_ren # 3,3
+      render_d =  res_get_render[3] # H,W
+      model_points = model_points # NR, 3
+      return real, render, flow, valid.float() , h_gt, h_render, h_init, bb, idx, K_ren, K_real, render_d, model_points
+    else:
+      return real, render, flow, valid.float()
 
   def get_rendered_data(self, img, depth_real, label, model_points, obj_idx, K_real, cam_flag, h_gt, h_real_est=None):
     """Get Rendered Data
@@ -431,7 +414,7 @@ class YCB(torch.utils.data.Dataset):
 
     new_tensor = render_d[ index_the_depth_map[v,0], index_the_depth_map[v,1] ] / 10000
     distance_depth_map_to_model = torch.abs( new_tensor[:] - torch.from_numpy( ren_locations[v,2])  )
-    not_val = (distance_depth_map_to_model > 0.01)
+    not_val = (distance_depth_map_to_model > 0.005)
     
     valid_points_for_flow = v
     

@@ -42,7 +42,7 @@ if __name__ == "__main__":
   signal.signal(signal.SIGTERM, signal_handler)
   
   parser = argparse.ArgumentParser()    
-  parser.add_argument('--exp', type=file_path, default='cfg/exp/exp.yml',
+  parser.add_argument('--exp', type=file_path, default='cfg/exp/eval_new.yml',
                       help='The main experiment yaml file.')
 
   args = parser.parse_args()
@@ -199,6 +199,7 @@ if __name__ == "__main__":
   if exp.get("mode","train") == "train":
     train_dataloader = datasets.fetch_dataloader( exp['train_dataset'], env )
     val_dataloader = datasets.fetch_dataloader( exp['val_dataset'], env )
+    val_dataloader.dataset.deterministic_random_shuffel()
     train_res = trainer.fit(model = model,
                           train_dataloader= train_dataloader,
                           val_dataloaders= val_dataloader)
