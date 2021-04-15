@@ -3,8 +3,8 @@ import sys
 os.chdir(os.path.join(os.getenv('HOME'), 'RPOSE'))
 sys.path.insert(0, os.getcwd())
 sys.path.append(os.path.join(os.getcwd() + '/src'))
+sys.path.append(os.path.join(os.getcwd() + '/segmentation'))
 sys.path.append(os.path.join(os.getcwd() + '/core'))
-
 import coloredlogs
 coloredlogs.install()
 from collections import OrderedDict
@@ -30,7 +30,7 @@ from pytorch_lightning.profiler import AdvancedProfiler
 
 # Costume Modules
 from src_utils import file_path, load_yaml, get_neptune_logger, get_tensorboard_logger
-from lightning import Network
+from models_asl import Network
 from src_utils import DotDict
 import datasets
 
@@ -42,7 +42,7 @@ if __name__ == "__main__":
   signal.signal(signal.SIGTERM, signal_handler)
   
   parser = argparse.ArgumentParser()    
-  parser.add_argument('--exp', type=file_path, default='cfg/exp/test_2_iterations/2_iterations.yml',
+  parser.add_argument('--exp', type=file_path, default='cfg/seg_exp/exp.yml',
                       help='The main experiment yaml file.')
 
   args = parser.parse_args()
@@ -168,38 +168,40 @@ if __name__ == "__main__":
       callbacks=cb_ls,
       logger=logger)   
     # WEIGHTS
-  if exp.get('weights_restore2',False):
-    p = os.path.join( env['base'],exp['checkpoint_load'])
-    if os.path.isfile( p ):
-      res = torch.load( p )
-      out = model.load_state_dict( res['state_dict'], 
-              strict=True)
-      print( "Restoere weights from ckpts")
+  # if exp.get('weights_restore2',False):
+  #   p = os.path.join( env['base'],exp['checkpoint_load'])
+  #   if os.path.isfile( p ):
+  #     res = torch.load( p )
+  #     out = model.load_state_dict( res['state_dict'], 
+  #             strict=True)
+  #     print( "Restoere weights from ckpts")
               
-  # RESTORE WEIGHTS
-  if exp['weights_restore']:
-    p = os.path.join( env['base'],exp['checkpoint_load'])
-    if os.path.isfile( p ):
-      if p.find("models/raft-kitti.pth") == -1:
-        res = model.load_state_dict( torch.load(p,
-          map_location=lambda storage, loc: storage)['state_dict'], 
-          strict=False)
-      else:      
-        # Loading orginal dict
-        state_dict = torch.load(p)
-        new_state_dict = OrderedDict()
-        for key, value in state_dict.items():
-            new_key = key[7:]
-            new_state_dict[new_key] = value
-        res = model.model.load_state_dict( new_state_dict )
-      print('Restoring weights: ' + str(res))
-    else:
-      raise Exception('Checkpoint not a file')
+  # # RESTORE WEIGHTS
+  # if exp['weights_restore']:
+  #   p = os.path.join( env['base'],exp['checkpoint_load'])
+  #   if os.path.isfile( p ):
+  #     if p.find("models/raft-kitti.pth") == -1:
+  #       res = model.load_state_dict( torch.load(p,
+  #         map_location=lambda storage, loc: storage)['state_dict'], 
+  #         strict=False)
+  #     else:      
+  #       # Loading orginal dict
+  #       state_dict = torch.load(p)
+  #       new_state_dict = OrderedDict()
+  #       for key, value in state_dict.items():
+  #           new_key = key[7:]
+  #           new_state_dict[new_key] = value
+  #       res = model.model.load_state_dict( new_state_dict )
+  #     print('Restoring weights: ' + str(res))
+  #   else:
+  #     raise Exception('Checkpoint not a file')
   
   if exp.get("mode","train") == "train":
     train_dataloader = datasets.fetch_dataloader( exp['train_dataset'], env )
     val_dataloader = datasets.fetch_dataloader( exp['val_dataset'], env )
     val_dataloader.dataset.deterministic_random_shuffel()
+    train_dataloader.dataset.segmentation_only = True
+    val_dataloader.dataset.segmentation_only = True
     train_res = trainer.fit(model = model,
                           train_dataloader= train_dataloader,
                           val_dataloaders= val_dataloader)

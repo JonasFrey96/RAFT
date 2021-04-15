@@ -93,6 +93,11 @@ class YCB(torch.utils.data.Dataset):
     self._load_flow(root)
     self.err = False
     self._num_pt_cad_model = 2000
+    self.segmentation_only = False
+
+    self._output_transform = transforms.Compose([
+          transforms.Normalize([.485, .456, .406], [.229, .224, .225]),
+    ])
 
   def _load(self, mode, root):
     with open(f'cfg/datasets/ycb/{mode}.pkl', 'rb') as handle:
@@ -104,6 +109,20 @@ class YCB(torch.utils.data.Dataset):
       self._obj_idx_list = mappings['obj_idx_list']
       self._camera_idx_list = mappings['camera_idx_list']
       self._length = len( self._base_path_list )
+    
+    inc = self._cfg_d.get('increase_real_to_render_ratio', 1)
+    if  inc > 1:
+      real_render = [ i.find("data_syn") for i in self._base_path_list ]
+      real = np.array( real_render  ) == -1
+      real_indices = np.where( real )[0]
+      if mode == 'train': 
+        for i in range( inc-1 ):
+          self._base_path_list += np.array( self._base_path_list)[real_indices].tolist()
+          self._obj_idx_list += np.array( self._obj_idx_list )[real_indices].tolist()
+          self._camera_idx_list += np.array( self._camera_idx_list )[real_indices].tolist()
+          self._length = len( self._base_path_list )
+          
+
 
   def __getitem__(self, index):
     return self.getElement(index, h_real_est=None)
@@ -191,16 +210,25 @@ class YCB(torch.utils.data.Dataset):
       new_idx = random.randint(0, len(self))
       return self[new_idx]
     
+    real = res_get_render[0]
+    render = res_get_render[1]
+
+    # AUGMENTATION
+    real = self._trancolor( real.permute(2,0,1)/255 )
+    render = self._trancolor( render.permute(2,0,1)/255 )
+
+    if self.segmentation_only:
+      real = self._output_transform(real)
+      render = self._output_transform(render)
+      return (real , render, res_get_render[2].type( torch.long),  torch.tensor( synthetic ))
+
+    real *= 255.0
+    render *= 255.0
+
     idx = torch.LongTensor([int(obj_idx) - 1])
     
     flow = torch.cat( [res_get_render[5][:,:,None],res_get_render[6][:,:,None]], dim=2 )
     
-    real = res_get_render[0]
-    render = res_get_render[1]
-    
-    # AUGMENTATION
-    real = (self._trancolor( real.permute(2,0,1)/255 )*255)
-    render = (self._trancolor( render.permute(2,0,1)/255 )*255) #.type(torch.uint8)
 
     # TEMPLATE INTERFACE
     flow = flow.numpy().astype(np.float32) #H,W,
@@ -215,6 +243,9 @@ class YCB(torch.utils.data.Dataset):
 
     flow = fn(flow).permute(2,0,1)
     
+    
+
+
     if self.estimate_pose:
 
       h_render = res_get_render[9] # 4,4
@@ -224,9 +255,9 @@ class YCB(torch.utils.data.Dataset):
       K_ren = self.K_ren # 3,3
       render_d =  res_get_render[3] # H,W
       model_points = model_points # NR, 3
-      return real, render, flow, valid.float() , h_gt, h_render, h_init, bb, idx, K_ren, K_real, render_d, model_points
+      return real, render, flow, valid.float(), torch.tensor( synthetic ), h_gt, h_render, h_init, bb, idx, K_ren, K_real, render_d, model_points
     else:
-      return real, render, flow, valid.float()
+      return real, render, flow, valid.float(), torch.tensor( synthetic )
 
   def get_rendered_data(self, img, depth_real, label, model_points, obj_idx, K_real, cam_flag, h_gt, h_real_est=None):
     """Get Rendered Data
@@ -343,6 +374,9 @@ class YCB(torch.utils.data.Dataset):
     valid_flow_mask_cropped =  b_real.crop(  torch.from_numpy( flow[2][:,:,None]).type(
       torch.float32), scale=True, mode="nearest",
       output_h = output_h, output_w = output_w).type(torch.bool).numpy()   
+    if self.segmentation_only:
+      return real_img, render_img, torch.from_numpy(valid_flow_mask_cropped[:,:,0])
+
     if flow[2].sum() < 100:
       return False
     

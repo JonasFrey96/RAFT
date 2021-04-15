@@ -50,7 +50,7 @@ SUM_FREQ = 100
 VAL_FREQ = 5000
 
 
-def sequence_loss(flow_preds, flow_gt, valid, gamma=0.8, max_flow=MAX_FLOW):
+def sequence_loss(flow_preds, flow_gt, valid,  synthetic, gamma=0.8, max_flow=MAX_FLOW):
     """ Loss function defined over sequence of flow predictions """
 
     n_predictions = len(flow_preds)    
@@ -66,15 +66,22 @@ def sequence_loss(flow_preds, flow_gt, valid, gamma=0.8, max_flow=MAX_FLOW):
         flow_loss += i_weight * (valid[:, None] * i_loss).mean()
 
     epe = torch.sum((flow_preds[-1] - flow_gt)**2, dim=1).sqrt()
+    epe2 = epe.clone()
+    epe2 = epe2 * valid
+    epe2 = epe2.sum(dim=(1,2)) / valid.sum(dim=(1,2))
+    metrics = {}
+    if synthetic.sum() > 0:
+      metrics['epe_render'] = epe2[synthetic].mean().item()
+    non_synthetic = (synthetic==False)
+    if non_synthetic.sum() > 0:
+      metrics['epe_real'] = epe2[non_synthetic].mean().item()
+
     epe = epe.view(-1)[valid.view(-1)]
-
-    metrics = {
-        'epe': epe.mean().item(),
-        '1px': (epe < 1).float().mean().item(),
-        '3px': (epe < 3).float().mean().item(),
-        '5px': (epe < 5).float().mean().item(),
-    }
-
+    metrics['epe'] = epe.mean().item()
+    metrics['1px'] = (epe < 1).float().mean().item()
+    metrics['3px'] = (epe < 3).float().mean().item()
+    metrics['5px'] = (epe < 5).float().mean().item()
+    
     return flow_loss, metrics
     
 class Network(LightningModule):
@@ -96,7 +103,10 @@ class Network(LightningModule):
       self._estimate_pose = True
     else:
       self._estimate_pose = False
-      
+    
+    self._count_real = {'train': 0, 'val': 0, 'test': 0}
+    self._count_render = {'train': 0, 'val': 0, 'test': 0}
+    
     # p_visu, writer=None, num_classes=20, epoch=0, store=True
     
   def forward(self, batch, **kwargs):
@@ -134,12 +144,13 @@ class Network(LightningModule):
     BS = batch[0].shape[0] 
     flow = batch[2]
     valid = batch[3]
+    synthetic = batch[4]
     flow_predictions = self(batch = batch)
 
-    loss, metrics = sequence_loss(flow_predictions, flow, valid, self._exp['model']['gamma'])
+    loss, metrics = sequence_loss(flow_predictions, flow, valid, synthetic, self._exp['model']['gamma'])
 
     if self._estimate_pose:
-      h_gt, h_render, h_init, bb, idx, K_ren, K_real, render_d, model_points = batch[4:]
+      h_gt, h_render, h_init, bb, idx, K_ren, K_real, render_d, model_points = batch[5:]
       res_dict, count_invalid = full_pose_estimation( 
         h_gt = h_gt.clone(), 
         h_render = h_render.clone(),
@@ -201,8 +212,18 @@ class Network(LightningModule):
       for k in res_dict.keys():
         self.log(f'{self._mode}_{k}_gt_flow', res_dict[k].mean(), on_step=True, on_epoch=True, prog_bar=True)
 
+    
+    logging_metrices = ['epe', 'epe_real', 'epe_render']
+    for met in logging_metrices:
+      if met in metrics:
+        self.log(f'{self._mode}_{met}', float(metrics[met]), on_step=True, on_epoch=True, prog_bar=True)
 
-    self.log(f'{self._mode}_epe', metrics['epe'], on_step=True, on_epoch=True, prog_bar=True)
+    self._count_real[self._mode] += (synthetic ==False).sum()
+    self._count_render[self._mode] += (synthetic).sum()
+    
+    self.log(f'{self._mode}_count_real', self._count_real[self._mode], on_step=False, on_epoch=True, prog_bar=False)
+    self.log(f'{self._mode}_count_render', self._count_render[self._mode], on_step=False, on_epoch=True, prog_bar=False)
+
     return {'loss': loss, 'pred': flow_predictions, 'target': flow}
   
   def plot(self, flow_gt, flow_pred, img1, img2, valid ):
