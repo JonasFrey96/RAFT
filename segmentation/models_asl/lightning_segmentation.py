@@ -56,20 +56,26 @@ class Network(LightningModule):
     self.model = FastSCNN(**self._exp['model']['cfg'])
     
     p_visu = os.path.join( self._exp['name'], 'visu')
-    
+    self._output_transform = transforms.Compose([
+          transforms.Normalize([.485, .456, .406], [.229, .224, .225]),
+    ])
     self.visualizer = Visualizer(
       p_visu=p_visu,
       logger=None,
       num_classes=self._exp['model']['cfg']['num_classes']+1)
     self._mode = 'train'
-  
+
+    self._plot_images = {'train': 0, 'val':0, 'test':0} 
+    self._plot_images_max = {'train': 3, 'val': 3, 'test': 3}
+
   def forward(self, batch, **kwargs):
-    
     return self.model(batch)
   
   def on_train_epoch_start(self):
     self._mode = 'train'
-     
+    for k in self._plot_images.keys():
+      self._plot_images[k] = 0
+    
   def on_train_start(self):
     print('Start')
     self.visualizer.logger= self.logger
@@ -79,10 +85,11 @@ class Network(LightningModule):
   
   
   def training_step(self, batch, batch_idx):
-    real = batch[0]
-    render = batch[1]
+    real = self._output_transform(batch[0])
+    render = self._output_transform(batch[1])
     target = batch[2]
     synthetic = batch[3]
+    
     BS, C, H, W = real.shape
     inp = torch.cat ( [real,render],dim=1)
     
@@ -90,8 +97,27 @@ class Network(LightningModule):
     loss =F.cross_entropy(outputs[0], target, ignore_index=-1, reduction='none').mean(dim=(1,2))      
     pred = torch.argmax(outputs[0], 1)
 
+    # LOG    
+    self.plot(batch[0], batch[1], pred, target)
+
+    # COMPUTE STATISTICS
+    
     acc = (pred == target).sum() / (BS * H * W)  
     
+    TN = ((pred == 0) * (target == 0)).sum().float()
+    FP = ((pred == 1) * (target == 0)).sum().float()
+    TP = ((pred == 1) * (target == 1)).sum().float() 
+    FN = ((pred == 0) * (target == 1)).sum().float()
+    s = (TN + FP +TP + FN).float() 
+    TN /= s
+    FP /= s
+    TP /= s
+    FN /= s
+    self.log(f'{self._mode}_TN_ratio', TN, on_step=False, on_epoch=True)
+    self.log(f'{self._mode}_TP_ratio', TP, on_step=False, on_epoch=True)
+    self.log(f'{self._mode}_FN_ratio', FN, on_step=False, on_epoch=True)
+    self.log(f'{self._mode}_FP_ratio', FP, on_step=False, on_epoch=True)
+
     self.log(f'{self._mode}_acc', acc, on_step=False, on_epoch=True)
     self.log(f'{self._mode}_loss', loss.mean(), on_step=False, on_epoch=True)
 
@@ -105,14 +131,41 @@ class Network(LightningModule):
     loss = loss.mean()
     return {'loss': loss }
   
+  def plot(self, ori_real, ori_render, pred, target):
+    i = int(self._plot_images[self._mode])
+    if self._plot_images[self._mode] < self._plot_images_max[self._mode] :
+      self._plot_images[self._mode] += 1
+      
+      BS = pred.shape[0]
+      rows = int( BS**0.5 )
+      grid_target = make_grid(target[:,None].repeat(1,3,1,1),nrow = rows, padding = 2,
+              scale_each = False, pad_value = 2)
+      grid_pred = make_grid(pred[:,None].repeat(1,3,1,1),nrow = rows, padding = 2,
+              scale_each = False, pad_value = 2)
+
+      grid_ori_real = make_grid(ori_real,nrow = rows, padding = 2,
+              scale_each = False, pad_value = 0)
+      grid_ori_render = make_grid(ori_render,nrow = rows, padding = 2,
+              scale_each = False, pad_value = 0)
+
+      self.visualizer.plot_segmentation( label = grid_target[0], method= 'right')
+      self.visualizer.plot_segmentation( label = grid_pred[0], method= 'left', tag=f"{self._mode}_Left Pred, GT right_{i}")
+
+      self.visualizer.plot_image( img = grid_ori_real, method= 'right')
+      self.visualizer.plot_segmentation( label = grid_pred[0], method= 'left', tag=f"{self._mode}_Left Pred, Right Image_{i}")
+
+      self.visualizer.plot_image( img = torch.cat( [grid_ori_real, grid_ori_render], dim=2) , method= 'right')
+      self.visualizer.plot_segmentation( label = grid_pred[0], method= 'left', tag=f"{self._mode}_Left Pred, Right Composed-Image_{i}")
+
   def validation_step(self, batch, batch_idx, dataloader_idx=0):
     return self.training_step(batch, batch_idx)
   
-  def on_test_epoch_start(self):
-    self._mode = 'val'
 
   def on_test_epoch_start(self):
     self._mode = 'test'
+    for k in self._plot_images.keys():
+      self._plot_images[k] = 0
+    
     
   def test_step(self, batch, batch_idx):
     return self.training_step(batch, batch_idx)

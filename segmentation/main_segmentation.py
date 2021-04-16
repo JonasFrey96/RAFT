@@ -42,7 +42,7 @@ if __name__ == "__main__":
   signal.signal(signal.SIGTERM, signal_handler)
   
   parser = argparse.ArgumentParser()    
-  parser.add_argument('--exp', type=file_path, default='cfg/seg_exp/exp.yml',
+  parser.add_argument('--exp', type=file_path, default='cfg/seg_exp/1/exp.yml',
                       help='The main experiment yaml file.')
 
   args = parser.parse_args()
@@ -168,13 +168,14 @@ if __name__ == "__main__":
       callbacks=cb_ls,
       logger=logger)   
     # WEIGHTS
-  # if exp.get('weights_restore2',False):
-  #   p = os.path.join( env['base'],exp['checkpoint_load'])
-  #   if os.path.isfile( p ):
-  #     res = torch.load( p )
-  #     out = model.load_state_dict( res['state_dict'], 
-  #             strict=True)
-  #     print( "Restoere weights from ckpts")
+  
+  if exp.get('weights_restore2',False):
+    p = os.path.join( env['base'],exp['checkpoint_load'])
+    if os.path.isfile( p ):
+      res = torch.load( p )
+      out = model.load_state_dict( res['state_dict'], 
+              strict=True)
+      print( "Restored weights from ckpts!")
               
   # # RESTORE WEIGHTS
   # if exp['weights_restore']:

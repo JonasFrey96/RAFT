@@ -95,9 +95,7 @@ class YCB(torch.utils.data.Dataset):
     self._num_pt_cad_model = 2000
     self.segmentation_only = False
 
-    self._output_transform = transforms.Compose([
-          transforms.Normalize([.485, .456, .406], [.229, .224, .225]),
-    ])
+    
 
   def _load(self, mode, root):
     with open(f'cfg/datasets/ycb/{mode}.pkl', 'rb') as handle:
@@ -218,9 +216,7 @@ class YCB(torch.utils.data.Dataset):
     render = self._trancolor( render.permute(2,0,1)/255 )
 
     if self.segmentation_only:
-      real = self._output_transform(real)
-      render = self._output_transform(render)
-      return (real , render, res_get_render[2].type( torch.long),  torch.tensor( synthetic ))
+      return (real , render, res_get_render[2].type( torch.long), torch.tensor( synthetic ))
 
     real *= 255.0
     render *= 255.0
