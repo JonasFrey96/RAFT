@@ -8,7 +8,6 @@ def full_pose_estimation(
 	bb, 
 	flow_valid, 
 	flow_pred, 
-	flow_gt,
 	idx,
 	K_ren,
 	K_real,
@@ -77,19 +76,16 @@ def full_pose_estimation(
 	adds_h_gt = adds( target.clone(), model_points.clone(), idx, H=h_gt)
 
 
-	limit = torch.norm( h_pred[:,:3,3] - h_init[:,:3,3], dim=1, p=2) > 0.04	
+	limit = torch.norm( h_pred[:,:3,3] - h_init[:,:3,3], dim=1, p=2) > cfg.get('trust_region', 0.05)
 
 	if limit.sum() == real_tl.shape[0] :
 		print( "Failed NORM: ", torch.norm( h_pred[:,:3,3] - h_init[:,:3,3], dim=1, p=2), "ADDs" ,adds_h_pred  )
-		return {}, limit.sum()
-	elif (adds_h_pred>0.05).sum() > 0 :
-		print( "Failed ADDS: ", adds_h_pred	)
-		return {}, limit.sum()
+		return {}, limit.sum(), torch.eye(4).to('cuda')[None], [0]
 	
-	valid = (limit + (adds_h_pred>0.05)) == False
+	valid = limit == False
 	count_invalid = real_tl.shape[0]- valid.sum()
-	# if limit.sum() ==  real_tl.shape[0]:
-	# 	return {}, limit.sum()
+	if valid.sum() ==  0:
+		return {}, limit.sum(), torch.eye(4).to('cuda')[None] , [0]
 
 
 	adds_h_init = adds_h_init[valid]
@@ -106,4 +102,4 @@ def full_pose_estimation(
 					"add_s_h_pred": add_s_h_pred,
 					"add_s_h_init": add_s_h_init,
 					# "add_s_h_gt": add_s_h_gt
-					}, count_invalid
+					}, count_invalid, h_pred, ratios

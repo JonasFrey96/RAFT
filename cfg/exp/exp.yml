@@ -1,16 +1,30 @@
-name: 4gpus/fast_lr_load_kittickpt
+name: evaluate_pose/pose_cnn_init
 neptune_project_name: rpose
 offline_mode: false
 timestamp: true
-weights_restore: false
-weights_restore2: true
+weights_restore: true
+checkpoint_load: 6_restart/2021-04-16T18:34:09_12_iteartions_4_real_finetuning_real/last.ckpt
+weights_restore_seg: true
+checkpoint_load_seg: seg_exp/24h_long_run_fully_working/last.ckpt
 checkpoint_restore: false
-checkpoint_load: models/kitti.ckpt
 
-mode: train
+mode: test
 lr: 0.0005
 tag_list:
   - flow_estimation
+
+logged_images_max:
+  train: 10
+  val: 10
+  test: 10
+
+
+full_pose_estimation:
+  flow_to_trafo_PnP:
+    method: solvePnPRefineLM
+    reprojectionError: 3
+    iterationsCount: 100
+  trust_region: 0.1
 
 # Standard Setting
 lr_scheduler:
@@ -45,14 +59,24 @@ trainer:
   num_sanity_val_steps: 0
   check_val_every_n_epoch: 1
   profiler: False
-  accelerator: ddp
+  # accelerator: ddp
+
+seg:
+  name: Fast-SCNN
+  cfg:
+    num_classes: 2
+    aux: false
+    extraction:
+      active: false
+      layer: 'learn_to_down'
+    input_channels: 6
 
 model:
   name: RPOSE
   args:
     small: False
   gamma: 0.85
-  iters: 2
+  iters: 12
 
 cb_early_stopping:
   active: false
@@ -82,6 +106,8 @@ train_dataset:
     - 640
   mode: train
   cfg_ycb:
+    init_mode: noise_adaptive
+    expand_factor: 1.3
     aug_params:
        crop_size:
        - 480
@@ -91,7 +117,7 @@ train_dataset:
        do_flip: True
     output_cfg:
       noise_translation: 0.01
-      noise_rotation: 45 
+      noise_rotation: 40 
   loader:
     pin_memory: true
     batch_size: 5
@@ -105,6 +131,8 @@ val_dataset:
     - 640
   mode: val
   cfg_ycb:
+    init_mode: noise_adaptive
+    expand_factor: 1.3
     aug_params:
        crop_size:
        - 480
@@ -114,7 +142,7 @@ val_dataset:
        do_flip: True
     output_cfg:
       noise_translation: 0.01
-      noise_rotation: 45   
+      noise_rotation: 45
   loader:
     pin_memory: true
     batch_size: 5
@@ -128,45 +156,23 @@ test_dataset:
     - 640
   mode: test
   cfg_ycb:
+    init_mode: pose_cnn
+    expand_factor: 1.1
     aug_params:
        crop_size:
        - 480
        - 640
        min_scale: -0.2
        max_scale: 0.4
-       do_flip: True
+       do_flip: False
     output_cfg:
-      noise_translation: 0.01
-      noise_rotation: 45  
+      noise_translation: 0.02
+      noise_rotation: 40
   loader:
     pin_memory: true
-    batch_size: 5
-    shuffle: true
-    num_workers: 4
-
-# train_dataset:
-#   stage: kitti
-#   image_size:
-#     - 288
-#     - 960
-#   mode: train
-#   cfg_ycb:
-#     aug_params:
-#        crop_size:
-#        - 288
-#        - 960
-#        min_scale: -0.2
-#        max_scale: 0.4
-#        do_flip: True
-#     output_cfg:
-#       noise_translation: 0.02
-#       noise_rotation: 30      
-
-  loader:
-    pin_memory: true
-    batch_size: 4
-    shuffle: true
-    num_workers: 8
+    batch_size: 1
+    shuffle: false
+    num_workers: 0
     
 lr_monitor:
   cfg:

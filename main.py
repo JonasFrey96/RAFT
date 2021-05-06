@@ -4,7 +4,7 @@ os.chdir(os.path.join(os.getenv('HOME'), 'RPOSE'))
 sys.path.insert(0, os.getcwd())
 sys.path.append(os.path.join(os.getcwd() + '/src'))
 sys.path.append(os.path.join(os.getcwd() + '/core'))
-
+sys.path.append(os.path.join(os.getcwd() + '/segmentation'))
 import coloredlogs
 coloredlogs.install()
 from collections import OrderedDict
@@ -42,7 +42,7 @@ if __name__ == "__main__":
   signal.signal(signal.SIGTERM, signal_handler)
   
   parser = argparse.ArgumentParser()    
-  parser.add_argument('--exp', type=file_path, default='cfg/exp/test_2_iterations/2_iterations.yml',
+  parser.add_argument('--exp', type=file_path, default='cfg/exp/exp.yml',
                       help='The main experiment yaml file.')
 
   args = parser.parse_args()
@@ -168,33 +168,26 @@ if __name__ == "__main__":
       callbacks=cb_ls,
       logger=logger)   
     # WEIGHTS
-  if exp.get('weights_restore2',False):
+
+  if exp.get('weights_restore',False):
     p = os.path.join( env['base'],exp['checkpoint_load'])
     if os.path.isfile( p ):
       res = torch.load( p )
       out = model.load_state_dict( res['state_dict'], 
-              strict=True)
-      print( "Restoere weights from ckpts")
-              
-  # RESTORE WEIGHTS
-  if exp['weights_restore']:
-    p = os.path.join( env['base'],exp['checkpoint_load'])
+              strict=False)
+      print( "Restoere weights from ckpts", out)
+
+  if exp.get('weights_restore_seg',False) and model._estimate_pose == True:
+    p = os.path.join( env['base'],exp['checkpoint_load_seg'])
     if os.path.isfile( p ):
-      if p.find("models/raft-kitti.pth") == -1:
-        res = model.load_state_dict( torch.load(p,
-          map_location=lambda storage, loc: storage)['state_dict'], 
-          strict=False)
-      else:      
-        # Loading orginal dict
-        state_dict = torch.load(p)
-        new_state_dict = OrderedDict()
-        for key, value in state_dict.items():
-            new_key = key[7:]
-            new_state_dict[new_key] = value
-        res = model.model.load_state_dict( new_state_dict )
-      print('Restoring weights: ' + str(res))
-    else:
-      raise Exception('Checkpoint not a file')
+      res = torch.load( p )
+      new_statedict = {}
+      for (k,v) in res['state_dict'].items():
+        new_statedict[k.replace('model','seg') ] = v
+
+      out = model.load_state_dict( new_statedict, 
+              strict=False)
+      print( "Restore_seg weights from ckpts", out)
   
   if exp.get("mode","train") == "train":
     train_dataloader = datasets.fetch_dataloader( exp['train_dataset'], env )
@@ -206,6 +199,9 @@ if __name__ == "__main__":
 
   elif exp.get("mode","train") == "test":
     test_dataloader = datasets.fetch_dataloader( exp['test_dataset'], env )
+    
+    # test_dataloader.dataset.deterministic_random_shuffel()
+
     trainer.test(model = model,
         test_dataloaders = test_dataloader,
         ckpt_path =os.path.join( env['base'],exp['checkpoint_load']) )

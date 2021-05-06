@@ -72,16 +72,18 @@ class YCB(torch.utils.data.Dataset):
     
     self._flow_augmenter = SparseFlowAugmentor(**cfg_d['aug_params'])
 
-    self._num_pt = cfg_d.get('num_points', 1000)
-    
     self._trancolor_background = transforms.ColorJitter(0.1, 0.1, 0.1, 0.05)
+    
+    if mode == "test":
+      self._trancolor = transforms.ColorJitter(0.01, 0.01, 0.01, 0.005)
+    else:
+      self._trancolor = transforms.ColorJitter(0.2, 0.2, 0.2, 0.05)
 
-    self._trancolor = transforms.ColorJitter(0.2, 0.2, 0.2, 0.05)
 
     self._vm = ViewpointManager(
       store=os.path.join(root,'viewpoints_renderings'),
       name_to_idx= self._names_idx,
-      nr_of_images_per_object=2500,
+      nr_of_images_per_object=10000,
       device='cpu',
       load_images=False)
 
@@ -91,11 +93,9 @@ class YCB(torch.utils.data.Dataset):
     self.K_ren = self.K["0"]
 
     self._load_flow(root)
-    self.err = False
-    self._num_pt_cad_model = 2000
+    self.err = True
+    self._num_pt_cad_model = 2600
     self.segmentation_only = False
-
-    
 
   def _load(self, mode, root):
     with open(f'cfg/datasets/ycb/{mode}.pkl', 'rb') as handle:
@@ -184,6 +184,7 @@ class YCB(torch.utils.data.Dataset):
     
     h_gt = np.eye(4)
     h_gt[:3,:4] =  meta['poses'][:, :, obj_idx_in_list]   
+    h_gt = h_gt.astype(np.float32)
 
     if synthetic:    
       img_arr = np.array( img )[:,:,:3] 
@@ -192,8 +193,10 @@ class YCB(torch.utils.data.Dataset):
       img_arr[mask] = background_img[mask]
     else:
       img_arr = np.array(img)[:,:,:3]
-   
 
+    if self.estimate_pose:
+      img_ori = torch.from_numpy( copy.deepcopy(img_arr) )
+    
     dellist = [j for j in range(0, len(self._pcd_cad_list[obj_idx-1]))]
     dellist = random.sample(dellist, len(
       self._pcd_cad_list[obj_idx-1]) - self._num_pt_cad_model)
@@ -201,49 +204,54 @@ class YCB(torch.utils.data.Dataset):
     
     cam_flag = self._camera_idx_list[index]
     
+    h_real_est = None
+    m = self._cfg_d.get( 'init_mode', 'pose_cnn')
+    if m == 'pose_cnn':
+      h_real_est = get_init_pose_posecnn( obj_idx, p, h_gt, model_points, K, size=(self._h,self._w))
+    elif m == 'tracking':
+      h_real_est = get_init_pose_track( obj_idx, p, h_gt, model_points, K , size=(self._h,self._w))
+    elif m == 'tracking_gt':
+      h_real_est = get_init_pose_track_gt( obj_idx, p, h_gt, model_points, K , size=(self._h,self._w))
+    elif m == 'noise_adaptive': 
+      h_real_est = get_adaptive_noise(model_points, h_gt, K, obj_idx = obj_idx , factor=5, rot_deg = 30)
+    
+    if m == 'noise' or h_real_est is None:
+      nt = self._cfg_d['output_cfg'].get('noise_translation', 0.02) 
+      nr = self._cfg_d['output_cfg'].get('noise_rotation', 30) 
+      h_real_est = add_noise( h_gt, nt, nr)
+    
     res_get_render = self.get_rendered_data( img_arr, depth, label, model_points, int(obj_idx), K, cam_flag, h_gt, h_real_est)
     if res_get_render is False:
       if self.err:
         print("Violation in get render data")
       new_idx = random.randint(0, len(self))
       return self[new_idx]
-    
+
     real = res_get_render[0]
     render = res_get_render[1]
-
     # AUGMENTATION
     real = self._trancolor( real.permute(2,0,1)/255 )
     render = self._trancolor( render.permute(2,0,1)/255 )
-
+  
     if self.segmentation_only:
       return (real , render, res_get_render[2].type( torch.long), torch.tensor( synthetic ))
 
     real *= 255.0
     render *= 255.0
-
-    idx = torch.LongTensor([int(obj_idx) - 1])
-    
+    idx = torch.LongTensor([int(obj_idx) - 1])    
     flow = torch.cat( [res_get_render[5][:,:,None],res_get_render[6][:,:,None]], dim=2 )
-    
 
     # TEMPLATE INTERFACE
     flow = flow.numpy().astype(np.float32) #H,W,
     valid = res_get_render[7].numpy().astype(np.float32)
-
     # img1, img2, flow, valid = self._flow_augmenter(img1, img2, flow, valid)
-
     if valid is not None:
       valid = torch.from_numpy(valid)
     else:
       valid = (flow[0].abs() < 1000) & (flow[1].abs() < 1000)
-
     flow = fn(flow).permute(2,0,1)
     
-    
-
-
     if self.estimate_pose:
-
       h_render = res_get_render[9] # 4,4
       h_init = res_get_render[10] # 4,4
       bb = res_get_render[8] 
@@ -251,7 +259,7 @@ class YCB(torch.utils.data.Dataset):
       K_ren = self.K_ren # 3,3
       render_d =  res_get_render[3] # H,W
       model_points = model_points # NR, 3
-      return real, render, flow, valid.float(), torch.tensor( synthetic ), h_gt, h_render, h_init, bb, idx, K_ren, K_real, render_d, model_points
+      return real, render, flow, valid.float(), torch.tensor( synthetic ), h_gt, h_render, h_init, bb, idx, K_ren, K_real, render_d, model_points, img_ori, p
     else:
       return real, render, flow, valid.float(), torch.tensor( synthetic )
 
@@ -286,12 +294,8 @@ class YCB(torch.utils.data.Dataset):
     output_h = self._image_size[0]
     output_w = self._image_size[1]
 
-    if not  ( h_real_est is None ): 
-      h_init = h_real_est
-    else:
-      nt = self._cfg_d['output_cfg'].get('noise_translation', 0.02) 
-      nr = self._cfg_d['output_cfg'].get('noise_rotation', 30) 
-      h_init = add_noise( h_gt, nt, nr)
+    h_init = h_real_est
+    
         
     # transform points
     rot = R.from_euler('z', 180, degrees=True).as_matrix()
@@ -315,7 +319,7 @@ class YCB(torch.utils.data.Dataset):
       h_render[0, :3, 3].view(1, 3), K=self.K_ren)
     center_ren = center_ren.squeeze()
     b_ren.move(-center_ren[1], -center_ren[0])
-    b_ren.expand(1.1)
+    b_ren.expand( self._cfg_d.get('expand_factor', 1.3) )
     b_ren.expand_to_correct_ratio(w, w)
     b_ren.move(center_ren[1], center_ren[0])
     ren_h = b_ren.height()
@@ -339,7 +343,7 @@ class YCB(torch.utils.data.Dataset):
     center_real = center_real.squeeze()
     
     b_real.move(-center_real[0], -center_real[1])
-    b_real.expand(1.1)
+    b_real.expand( self._cfg_d.get('expand_factor', 1.3) )
     b_real.expand_to_correct_ratio(w, w)
     b_real.move(center_real[0], center_real[1])
     real_h = b_real.height()
@@ -558,6 +562,83 @@ class YCB(torch.utils.data.Dataset):
 
     return cad_list
 
+
+
+def get_init_pose_track( obj_idx, p, h_gt, model_points, K,size ):
+  key = p +'/' + str(obj_idx)
+  for i in range(1, 50):
+    k_tmp = key.split('/')
+    nr = int(k_tmp[-2])-i
+    k_tmp[-2] = f"{nr:06d}"
+    k = '/'.join( k_tmp )
+    tmp = os.path.join ( '/home/jonfrey/tmp', k[ k.find('ycb'):] + '.npy' )
+    if os.path.isfile( tmp ):
+      print("FOUND", p, obj_idx)
+      print('WILL RETURN ',tmp)
+      res = np.load( tmp )
+
+      if np.linalg.norm( res[:3,3] - h_gt[:3,3] ) < 0.03:
+        return res 
+      else:
+        break
+      
+  print("NOT FOUND ", p, obj_idx)
+  return get_init_pose_posecnn( obj_idx, p, h_gt, model_points, K, size)
+    
+def get_init_pose_track_gt( obj_idx, p, h_gt, model_points, K,size ):
+  key = p +'/' + str(obj_idx)
+  try: 
+    for i in range(1, 50):
+      k_tmp = key.split('/')
+      nr = int(k_tmp[-2])-i
+      k_tmp[-2] = f"{nr:06d}"
+      k = '/'.join( k_tmp )
+      tmp = os.path.join ( '/home/jonfrey/tmp', k[ k.find('ycb'):] + '.npy' )
+      if os.path.isfile( tmp ):
+        res = np.load( tmp )
+
+        if np.linalg.norm( res[:3,3] - h_gt[:3,3] ) < 0.1:
+          return res 
+        else:
+          break
+  except:
+    pass
+  print("NOT FOUND ", p, obj_idx)
+  return h_gt
+
+def get_init_pose_posecnn( obj_idx, p, h_gt, model_points, K, size):
+  h_real_est = None
+  base = "/home/jonfrey/PoseCNN-PyTorch/output/ycb_video/ycb_video_keyframe/vgg16_ycb_video_epoch_16.checkpoint.pth/"
+  m = os.path.join( base, p.split('/')[-2] + '_' + p.split('/')[-1] +'.mat' )
+  result = scio.loadmat(m)
+  pcnn_class_idxs =  result['rois'][:,1]
+  possible_rois_idx = np.where( pcnn_class_idxs == obj_idx )[0].tolist()
+  target = model_points @ h_gt[:3,:3].T + h_gt[:3,3]
+  bb = get_bb_real_target(torch.from_numpy( target[None,:,:] ), K[None])[0] 
+  bb_gt = np.zeros( size ,dtype=bool)
+  bb_gt[ int( bb.tl[0]): int( bb.br[0]), int( bb.tl[1] ): int( bb.br[1] )] = True # BINARY mask over BB
+  
+  if len( possible_rois_idx) > 0:
+    # iterate over possible rois and find one with highest overlap
+    overlaps = []
+    for rois_idx in possible_rois_idx:
+      bb_pcnn = np.zeros( size ,dtype=bool)
+      tl = (result['rois'][rois_idx, 3], result['rois'][rois_idx, 2])
+      br = (result['rois'][rois_idx, 5], result['rois'][rois_idx, 4])
+      bb_pcnn[ int(tl[0]):int(br[0]),int(tl[1]):int(br[1])] = True # BINARY mask over BB
+      overlaps.append(  (bb_gt * bb_pcnn).sum() / (bb_gt + bb_pcnn).sum() ) #IoU 
+    
+    max_rois = np.array( overlaps ).argmax()
+    if overlaps[max_rois] > 0.5:
+      # successfull selected
+      matched_roi = possible_rois_idx[max_rois]
+      quat = result['poses'][matched_roi,:4] #Nx7
+      trans = result['poses'][matched_roi,-3:] #Nx7
+      h_real_est = np.eye(4)
+      h_real_est[:3,3] = trans
+      h_real_est[:3,:3] = quat_to_rot( torch.from_numpy( quat)[None] , conv='wxyz', device='cpu').numpy()
+  return h_real_est
+
 def transform_mesh(mesh, H):
   """ directly operates on mesh and does not create a copy!"""
   t = np.ones((mesh.vertices.shape[0],4)) 
@@ -572,7 +653,7 @@ def rel_h (h1,h2):
 def add_noise(h, nt = 0.01, nr= 30):
   h_noise =np.eye(4)
   while  True:
-    x = special_ortho_group.rvs(3)
+    x = special_ortho_group.rvs(3).astype(np.float32)
     #_noise[:3,:3] = R.from_euler('zyx', np.random.uniform( -nr, nr, (1, 3) ) , degrees=True).as_matrix()[0]
     if abs( float( rel_h(h[:3,:3], x)/(2* float( np.math.pi) )* 360) ) < nr:
       break
@@ -610,3 +691,48 @@ def backproject_points_np(p, fx=None, fy=None, cx=None, cy=None, K=None):
   u = ((p[:, 0] / p[:, 2]) * fx) + cx
   v = ((p[:, 1] / p[:, 2]) * fy) + cy
   return np.stack([v, u]).T  
+
+def expand(bb, h,w):
+    bb.tl[0] = bb.tl[0]-h
+    bb.tl[1] = bb.tl[1]-w
+    bb.br[0] = bb.br[0]+h
+    bb.br[1] = bb.br[1]+w
+    
+def calculate_bb_cone( K, bb, mean):
+    points = np.stack( [bb.tl.numpy(), bb.br.numpy() ])
+    points = np.concatenate( [points,np.ones((2,1))], axis=1)
+    return (np.linalg.inv( K ) @ points.T * mean).T
+
+def get_adaptive_noise(model_points, h_gt, K, obj_idx = 0, factor=5, rot_deg = 30):
+    target_points = model_points @ h_gt[:3,:3].T + h_gt[:3,3]
+    bb = get_bb_real_target(torch.from_numpy( target_points[None,:,:] ), K[None])[0]
+    h_, w_ = bb.height(), bb.width()
+    bb_min = copy.deepcopy( bb)
+    bb_max = copy.deepcopy( bb)
+    expand ( bb_min, h = -int(h_/factor), w = -int(w_/factor))
+    expand ( bb_max, h = int(h_/factor), w = int(w_/factor))
+    
+    
+    mean_dis = np.mean(target_points[:,2])
+    mi = calculate_bb_cone(K,bb_min, mean_dis )
+    ma = calculate_bb_cone(K,bb_max, mean_dis )
+    a1 = mi-ma
+
+    noise = ( a1[0,0], a1[0,1], np.mean( a1[0,:2] ) *1.2)
+    
+    h_pred_est = np.eye(4)
+    h_pred_est[:3,3] = np.random.uniform(low=h_gt[:3,3]-noise, high=h_gt[:3,3]+noise, size=(3))
+    
+    if obj_idx == 12:
+        while True:
+            x = R.from_euler('xy', np.random.uniform( -rot_deg,rot_deg,(2) ), degrees=True).as_matrix() @ h_gt[:3,:3]
+            if abs(np.degrees( rel_h(h_gt[:3,:3], x))) < rot_deg:
+              break
+    
+    while  True:
+        x = special_ortho_group.rvs(3).astype(np.float32)
+        if abs(np.degrees( rel_h(h_gt[:3,:3], x))) < rot_deg:
+          break
+    h_pred_est[:3,:3] = x
+    return h_pred_est
+

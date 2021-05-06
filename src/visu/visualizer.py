@@ -21,10 +21,14 @@ from torchvision import transforms
 import math
 from math import pi
 import imageio 
-
+from skimage.morphology import convex_hull_image
 from ycb.rotations import re_quat
 from ycb.ycb_helper import BoundingBox
 
+from detectron2.config import get_cfg
+from detectron2 import model_zoo
+from detectron2.utils.visualizer import Visualizer as DetectronVisu
+from detectron2.data import DatasetCatalog, MetadataCatalog
 __all__ = ['Visualizer']
 
 def image_functionality(func):
@@ -52,6 +56,8 @@ def image_functionality(func):
       args[0]._storage_right = None
       log = True
     
+    log *= not kwargs.get('not_log', False)
+
     if log:
       log_exp = args[0].logger is not None
       tag = kwargs.get('tag', 'TagNotDefined')
@@ -69,7 +75,7 @@ def image_functionality(func):
 
       # Store & Log & Display in Jupyter
       if store:
-        p = os.path.join( args[0].p_visu, f'{epoch}_{tag}.png')
+        p = os.path.join( args[0].p_visu, f'{epoch:06d}_{tag}.png')
         imageio.imwrite(p, img)
       
       if log_exp:
@@ -153,7 +159,22 @@ class Visualizer():
 
     self._storage_left = None
     self._storage_right = None
-  
+
+    
+    class DotDict(dict):
+      """dot.notation access to dictionary attributes"""
+      __getattr__ = dict.get
+      __setattr__ = dict.__setitem__
+      __delattr__ = dict.__delitem__
+
+    self._meta_data =  {
+        'stuff_classes':['Invalid', 'Valid'],
+        'stuff_colors':[[255,89,94],
+                        [138,201,38]] 
+    }
+    self._meta_data = DotDict(self._meta_data)
+
+
   @property
   def epoch(self):
     return self._epoch
@@ -169,14 +190,28 @@ class Visualizer():
     self._store = store
   
   @image_functionality
+  def plot_detectron(self, img, label, **kwargs):
+    # use image function to get imagae is np.array uint8
+    img = self.plot_image( img, not_log=True )
+    try:
+      label = label.clone().cpu().numpy()
+    except:
+      pass
+    label = label.astype(np.long) 
+    detectronVisualizer = DetectronVisu( torch.from_numpy(img).type(torch.uint8), self._meta_data, scale=1)
+    out = detectronVisualizer.draw_sem_seg( label, area_threshold=None, alpha=0.5).get_image()
+    return out
+
+
+  @image_functionality
   def plot_image(self, img,**kwargs):
     try:
       img = img.clone().cpu().numpy()
     except:
       pass
-    if img.shape[2] == 3:
+    if img.shape[2] == 3 or img.shape[2] == 4:
       pass
-    elif img.shape[0] == 3:
+    elif img.shape[0] == 3 or img.shape[0] == 4: 
       img = np.moveaxis(img, [0, 1, 2], [2, 0, 1])
     else:
       raise Exception('Invalid Shape')  
@@ -373,62 +408,82 @@ mean = {torch.mean(flow[mask][:,1])}"""
     return img
 
   @image_functionality
-  def plot_estimated_pose(self, img, points, 
-                          trans=[[0, 0, 0]],
-                          rot_mat=[[1, 0, 0], [0, 1, 0], [0, 0, 1]],
-                          cam_cx=0, cam_cy=0, cam_fx=0, cam_fy=0,
-                          w=2, K = None, H=None, color_code_depth=False,
-                          max_val = 2,*args,**kwargs):
+  def plot_convex_hull(self, img, points, K, H, 
+                        color=(0,255,0,255), *args,**kwargs):
+      """
+      img:= original_image, [widht,height,RGB]
+      points:= points of the object model [length,x,y,z]
+      trans: [1,3]
+      rot: [3,3]
+      """
+      try: 
+        points = points.clone().cpu().numpy()
+      except:
+        pass
+      try: 
+        H = H.clone().cpu().numpy()
+      except:
+        pass
+      try: 
+        K = K.clone().cpu().numpy()
+      except:
+        pass
+      
+      base_layer = Image.fromarray( copy.deepcopy(img) ).convert("RGBA")
+      color_layer = Image.new('RGBA', base_layer.size, color=tuple( color[:3]) )
+      alpha_mask = Image.new('L', base_layer.size, 0)
+      
+      alpha_mask_draw = ImageDraw.Draw(alpha_mask)
+
+      target = points @ H[:3,:3].T + H[:3,3]
+      pixels = np.round(  ((K @ target.T)[:2,:] /  (K @ target.T)[2,:][None,:].repeat(2,0)).T ).astype(np.long)
+      _h,_w,_ = img.shape
+      m = (pixels[:,0] >= w) * (pixels[:,1] >= w) * (pixels[:,1] < (_h-w-1)) * (pixels[:,0] < (_w-w-1))
+      pixels = pixels[m]
+      arr = np.zeros ( img.shape[:2] , dtype= np.uint8 )
+      arr[ pixels[:,1], pixels[:,0] ] = 255
+      convex_mask = np.uint8( convex_hull_image( arr ) ) * color[3]
+      alpha_mask = Image.fromarray( convex_mask, mode='L' )
+      base_layer = np.array( Image.composite(color_layer, base_layer, alpha_mask) )
+      return base_layer.astype(np.uint8)
+      
+  @image_functionality
+  def plot_estimated_pose(self, img, points, K, H, 
+                          w=2, color=(0,255,0,255),*args,**kwargs):
     """
     img:= original_image, [widht,height,RGB]
     points:= points of the object model [length,x,y,z]
     trans: [1,3]
     rot: [3,3]
     """
-    if K is not None: 
-      cam_cx = K [0,2]
-      cam_cy = K [1,2] 
-      cam_fx = K [0,0]
-      cam_fy = K [1,1]
-    if H is not None:
-      rot_mat = H[:3,:3]
-      trans = H[:3,3][None,:]
-      if H[3,3] != 1:
-        raise Exception
-      if H[3,0] != 0 or H[3,1] != 0 or H[3,2] != 0:
-        raise Exception
+    try: 
+      points = points.clone().cpu().numpy()
+    except:
+      pass
+    try: 
+      H = H.clone().cpu().numpy()
+    except:
+      pass
+    try: 
+      K = K.clone().cpu().numpy()
+    except:
+      pass
 
-    if type(rot_mat) == list:
-      rot_mat = np.array(rot_mat)
-    if type(trans) == list:
-      trans = np.array(trans)
+    base_layer = Image.fromarray( copy.deepcopy(img) ).convert("RGBA")
+    color_layer = Image.new('RGBA', base_layer.size, color=tuple( color[:3]) )
+    alpha_mask = Image.new('L', base_layer.size, 0)
+    alpha_mask_draw = ImageDraw.Draw(alpha_mask)
 
-    img_d = copy.deepcopy(img)
-    points = np.dot(points, rot_mat.T)
-    points = np.add(points, trans[0, :])
-    for i in range(0, points.shape[0]):
-      p_x = points[i, 0]
-      p_y = points[i, 1]
-      p_z = points[i, 2]
-      u = int(((p_x / np.clip(p_z, a_min= 0.0001, a_max=None)) * cam_fx) + cam_cx)
-      v = int(((p_y / np.clip(p_z, a_min= 0.0001,a_max=None)) * cam_fy) + cam_cy)
-      try:
-        if color_code_depth:
-          z = min( max(0,points[i, 2]), max_val)/max_val
-          turbo = cm.get_cmap('turbo', 256)
-          rgba = turbo(float(z))
-          img_d[v - w:v + w + 1, u - w:u + w + 1, 0] = int( rgba[0]*255 )
-          img_d[v - w:v + w + 1, u - w:u + w + 1, 1] = int( rgba[1]*255 )
-          img_d[v - w:v + w + 1, u - w:u + w + 1, 2] = int( rgba[2]*255 )
-        else:
-          img_d[v - w:v + w + 1, u - w:u + w + 1, 0] = 0
-          img_d[v - w:v + w + 1, u - w:u + w + 1, 1] = 255
-          img_d[v - w:v + w + 1, u - w:u + w + 1, 2] = 0
-      except:
-        #print("out of bounce")
-        pass
-      
-    return img_d.astype(np.uint8)
+    target = points @ H[:3,:3].T + H[:3,3]
+    pixels = np.round(  ((K @ target.T)[:2,:] /  (K @ target.T)[2,:][None,:].repeat(2,0)).T )
+    _h,_w,_ = img.shape
+    m = (pixels[:,0] >= w) * (pixels[:,1] >= w) * (pixels[:,1] < (_h-w-1)) * (pixels[:,0] < (_w-w-1))
+    pixels = pixels[m]
+
+    for u,v in pixels.tolist():
+      alpha_mask_draw.ellipse( [(u - w, v - w ), (u + w + 1,v + w + 1) ], color[3])
+    base_layer = np.array( Image.composite(color_layer, base_layer, alpha_mask) )
+    return base_layer.astype(np.uint8)
   
   @image_functionality
   def plot_estimated_pose_on_bb(  self, img, points, tl, br,

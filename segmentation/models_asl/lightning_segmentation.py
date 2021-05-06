@@ -30,7 +30,7 @@ from pytorch_lightning.utilities import rank_zero_info, rank_zero_warn
 from torchvision.utils import make_grid
 from torch.nn import functional as F
 # MODULES
-from models_asl import FastSCNN, Teacher, ReplayStateSyncBack
+from models_asl import FastSCNN
 from visu import Visualizer
 
 #from .metrices import IoU, PixAcc

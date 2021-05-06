@@ -142,7 +142,7 @@ test_dataset:
        - 640
        min_scale: -0.2
        max_scale: 0.4
-       do_flip: True
+       do_flip: False
     output_cfg:
       noise_translation: 0.01
       noise_rotation: 40
