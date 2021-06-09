@@ -1,6 +1,8 @@
 from .flow_to_trafo_PnP import flow_to_trafo_PnP
 from loss import AddSLoss
 import torch
+import numpy as np
+
 def full_pose_estimation(
 	h_gt, 
 	h_render,
@@ -29,7 +31,6 @@ def full_pose_estimation(
 	sucs = []
 
 	for b in range( real_tl.shape[0] ):
-			
 		suc, h_pre, ratio = flow_to_trafo_PnP( 
 			real_br = real_br[b].type(typ).to('cpu'), 
 			real_tl = real_tl[b].type(typ).to('cpu'), 
@@ -75,26 +76,23 @@ def full_pose_estimation(
 	adds_h_init = adds( target.clone(), model_points.clone(), idx, H=h_init) 
 	adds_h_gt = adds( target.clone(), model_points.clone(), idx, H=h_gt)
 
-
-	limit = torch.norm( h_pred[:,:3,3] - h_init[:,:3,3], dim=1, p=2) > cfg.get('trust_region', 0.05)
+	limit = torch.norm( h_pred[:,:3,3] - h_init[:,:3,3], dim=1, p=2) > cfg.get('trust_region', 0.1)
 
 	if limit.sum() == real_tl.shape[0] :
 		print( "Failed NORM: ", torch.norm( h_pred[:,:3,3] - h_init[:,:3,3], dim=1, p=2), "ADDs" ,adds_h_pred  )
-		return {}, limit.sum(), torch.eye(4).to('cuda')[None], [0]
+		# return {}, limit.sum(), torch.eye(4).to('cuda')[None], [0]
 	
 	valid = limit == False
 	count_invalid = real_tl.shape[0]- valid.sum()
-	if valid.sum() ==  0:
-		return {}, limit.sum(), torch.eye(4).to('cuda')[None] , [0]
-
-
-	adds_h_init = adds_h_init[valid]
+	# if valid.sum() ==  0:
+	# 	return {}, limit.sum(), torch.eye(4).to('cuda')[None] , [0]
+	# adds_h_init = adds_h_init[valid]
 	# adds_h_gt = adds_h_gt[limit==False]
-	adds_h_pred = adds_h_pred[valid]
+	# adds_h_pred = adds_h_pred[valid]
 	# print( adds_h_pred* 100 , "cm ")
-	add_s_h_init = add_s_h_init[valid]
+	# add_s_h_init = add_s_h_init[valid]
 	# add_s_h_gt = add_s_h_gt[limit==False]
-	add_s_h_pred = add_s_h_pred[valid]
+	# add_s_h_pred = add_s_h_pred[valid]
 	# print("IDX min max", idx.min(), idx.max() )
 	return {"adds_h_pred": adds_h_pred,
 					"adds_h_init": adds_h_init,
@@ -102,4 +100,4 @@ def full_pose_estimation(
 					"add_s_h_pred": add_s_h_pred,
 					"add_s_h_init": add_s_h_init,
 					# "add_s_h_gt": add_s_h_gt
-					}, count_invalid, h_pred, ratios
+					}, count_invalid, h_pred, np.array( ratios ), valid

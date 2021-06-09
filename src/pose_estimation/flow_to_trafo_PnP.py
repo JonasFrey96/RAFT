@@ -146,4 +146,9 @@ def flow_to_trafo_PnP(*args, **kwargs):
         r_vec2 = r_vec2[:,None]
     
     h = rvec_tvec_to_H(r_vec2[:,0],t_vec2)
-    return True, torch.tensor(h, device=u_map.device ).type(u_map.dtype), ratio
+    
+    # calculate reprojection error
+    imagePointsEst, jac = cv2.projectPoints( objectPoints[None] , r_vec2, t_vec2, K_real.cpu().type(torch.float32).numpy(), dist)
+    repro_error = np.linalg.norm( imagePointsEst[:,0,:]-imagePoints, ord=2, axis=1 ).mean()
+
+    return True, torch.tensor(h, device=u_map.device ).type(u_map.dtype), 1-repro_error

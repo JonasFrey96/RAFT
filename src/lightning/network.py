@@ -42,6 +42,7 @@ from pose_estimation import full_pose_estimation, compute_auc, compute_percentag
 from models_asl import FastSCNN
 
 from ycb.rotations import so3_relative_angle
+import shutil
 
 __all__ = ['Network']
 
@@ -117,13 +118,12 @@ class Network(LightningModule):
       self.output_transform_seg = transforms.Compose([
             transforms.Normalize([.485, .456, .406], [.229, .224, .225]),
       ])
-      
     else:
       self._estimate_pose = False
     
     self._count_real = {'train': 0, 'val': 0, 'test': 0}
     self._count_render = {'train': 0, 'val': 0, 'test': 0}
-    import shutil
+    
     shutil.rmtree('/home/jonfrey/tmp/ycb', ignore_errors=True)
     
   def forward(self, batch, **kwargs):
@@ -169,16 +169,16 @@ class Network(LightningModule):
 
     if self._estimate_pose:
       
-      # PRED FLOW GT SEG
+      # PRED FLOW 
       inp = torch.cat ( [self.output_transform_seg(batch[0]/255.0),
       self.output_transform_seg(batch[1]/255.0 ) ],dim=1)
       outputs = self.seg(inp)
       probs = torch.nn.functional.softmax(outputs[0], dim=1)
       pred_valid = torch.argmax( probs, dim = 1)
-      
       acc = (pred_valid == valid).sum() / torch.numel( valid)
       h_gt, h_render, h_init, bb, idx, K_ren, K_real, render_d, model_points, img_real_ori, p = batch[5:]
       
+      # ESTIMATE POSE
       res_dict, count_invalid, h_pred__pred_pred, ratios = full_pose_estimation( 
         h_gt = h_gt.clone(), 
         h_render = h_render.clone(),
@@ -221,7 +221,6 @@ class Network(LightningModule):
 
       if len( res_dict ) > 0: 
         self.log(f'ransac_inlier_ratio', float(ratios[0]), on_step=False, on_epoch=True )
-          
         # STORE PREDICTIONS
         tmp = os.path.join ( self._exp['name'] , p[0][ p[0].find('ycb'):], str(int( idx[0] ) +1) + '.npy' )
         tmp2 = os.path.join ( "/home/jonfrey/tmp", p[0][ p[0].find('ycb'):], str(int( idx[0] ) +1) + '.npy' )
@@ -234,12 +233,7 @@ class Network(LightningModule):
         self.log(f'acc_mask_obj' + index_key, 
           acc.item(), 
           on_step=True, on_epoch=True )
-          
-        # self._adds[index_key].append( float(res_dict["adds_h_pred"].cpu()) )
-        # self._add_s[index_key].append( float(res_dict["add_s_h_pred"].cpu()) )
-
-        # self._adds_init[index_key].append( float(res_dict["adds_h_init"].cpu()) )
-        # self._add_s_init[index_key].append( float(res_dict["add_s_h_init"].cpu()) )
+        
         self.log(f'adds_init_obj'+index_key, res_dict["adds_h_init"].cpu().item() , on_step=True, on_epoch=True )
         self.log(f'add_s_init_obj'+index_key, res_dict["add_s_h_init"].cpu().item() , on_step=True, on_epoch=True )
 

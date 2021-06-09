@@ -93,9 +93,11 @@ class YCB(torch.utils.data.Dataset):
     self.K_ren = self.K["0"]
 
     self._load_flow(root)
-    self.err = True
+    self.err = False
     self._num_pt_cad_model = 2600
     self.segmentation_only = False
+    self.if_err_ret_none = False
+    self.valid_flow_minimum = 100
 
   def _load(self, mode, root):
     with open(f'cfg/datasets/ycb/{mode}.pkl', 'rb') as handle:
@@ -204,26 +206,35 @@ class YCB(torch.utils.data.Dataset):
     
     cam_flag = self._camera_idx_list[index]
     
-    h_real_est = None
-    m = self._cfg_d.get( 'init_mode', 'pose_cnn')
-    if m == 'pose_cnn':
-      h_real_est = get_init_pose_posecnn( obj_idx, p, h_gt, model_points, K, size=(self._h,self._w))
-    elif m == 'tracking':
-      h_real_est = get_init_pose_track( obj_idx, p, h_gt, model_points, K , size=(self._h,self._w))
-    elif m == 'tracking_gt':
-      h_real_est = get_init_pose_track_gt( obj_idx, p, h_gt, model_points, K , size=(self._h,self._w))
-    elif m == 'noise_adaptive': 
-      h_real_est = get_adaptive_noise(model_points, h_gt, K, obj_idx = obj_idx , factor=5, rot_deg = 30)
+    if h_real_est is None:
+      m = self._cfg_d.get( 'init_mode', 'pose_cnn')
+      if m == 'pose_cnn':
+        h_real_est = get_init_pose_posecnn( obj_idx, p, h_gt, model_points, K, size=(self._h,self._w))
+      elif m == 'tracking':
+        h_real_est = get_init_pose_track( obj_idx, p, h_gt, model_points, K , size=(self._h,self._w))
+      elif m == 'tracking_gt':
+        h_real_est = get_init_pose_track_gt( obj_idx, p, h_gt, model_points, K , size=(self._h,self._w))
+      elif m == 'noise_adaptive': 
+        h_real_est = get_adaptive_noise(model_points, h_gt, K, obj_idx = obj_idx , factor=5, rot_deg = 30)
+      
+      if h_real_est is None and self.if_err_ret_none:
+        print("PoseCNN failed")
+        return (None, idx)
+
+      if m == 'noise' or h_real_est is None:
+        nt = self._cfg_d['output_cfg'].get('noise_translation', 0.02) 
+        nr = self._cfg_d['output_cfg'].get('noise_rotation', 30) 
+        h_real_est = add_noise( h_gt, nt, nr)
     
-    if m == 'noise' or h_real_est is None:
-      nt = self._cfg_d['output_cfg'].get('noise_translation', 0.02) 
-      nr = self._cfg_d['output_cfg'].get('noise_rotation', 30) 
-      h_real_est = add_noise( h_gt, nt, nr)
-    
+    idx = torch.LongTensor([int(obj_idx) - 1]) 
     res_get_render = self.get_rendered_data( img_arr, depth, label, model_points, int(obj_idx), K, cam_flag, h_gt, h_real_est)
     if res_get_render is False:
       if self.err:
         print("Violation in get render data")
+      
+      if self.if_err_ret_none:
+        return (None, idx)
+
       new_idx = random.randint(0, len(self))
       return self[new_idx]
 
@@ -238,7 +249,6 @@ class YCB(torch.utils.data.Dataset):
 
     real *= 255.0
     render *= 255.0
-    idx = torch.LongTensor([int(obj_idx) - 1])    
     flow = torch.cat( [res_get_render[5][:,:,None],res_get_render[6][:,:,None]], dim=2 )
 
     # TEMPLATE INTERFACE
@@ -259,7 +269,22 @@ class YCB(torch.utils.data.Dataset):
       K_ren = self.K_ren # 3,3
       render_d =  res_get_render[3] # H,W
       model_points = model_points # NR, 3
-      return real, render, flow, valid.float(), torch.tensor( synthetic ), h_gt, h_render, h_init, bb, idx, K_ren, K_real, render_d, model_points, img_ori, p
+      return (real, 
+              render, 
+              flow, 
+              valid.float(), 
+              torch.tensor( synthetic ), 
+              torch.from_numpy( h_gt ), 
+              h_render, 
+              h_init, 
+              bb, 
+              idx, 
+              torch.from_numpy( K_ren ), 
+              K_real, 
+              render_d, 
+              torch.from_numpy( model_points ), 
+              img_ori, 
+              p) 
     else:
       return real, render, flow, valid.float(), torch.tensor( synthetic )
 
@@ -377,7 +402,7 @@ class YCB(torch.utils.data.Dataset):
     if self.segmentation_only:
       return real_img, render_img, torch.from_numpy(valid_flow_mask_cropped[:,:,0])
 
-    if flow[2].sum() < 100:
+    if flow[2].sum() < self.valid_flow_minimum:
       return False
     
     u_cropped = b_real.crop( torch.from_numpy( flow[0][:,:,None] ).type(
@@ -443,7 +468,7 @@ class YCB(torch.utils.data.Dataset):
     val2 = (index_the_depth_map[:,1] < 640) * (index_the_depth_map[:,1] >= 0)
 
     v = val * val2
-    if v.sum() < 10:
+    if v.sum() < self.valid_flow_minimum:
       return False
 
     new_tensor = render_d[ index_the_depth_map[v,0], index_the_depth_map[v,1] ] / 10000
