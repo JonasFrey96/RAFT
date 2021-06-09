@@ -3,7 +3,6 @@ cfg/exp/tmp/*
 *.egg-info
 cfg/exp/*/*
 dist
-datasets
 pytorch_env
 models
 build
