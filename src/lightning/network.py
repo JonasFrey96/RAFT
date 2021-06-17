@@ -76,6 +76,7 @@ def sequence_loss(flow_preds, flow_gt, valid,  synthetic, gamma=0.8, max_flow=MA
     epe2 = epe2 * valid
     epe2 = epe2.sum(dim=(1,2)) / valid.sum(dim=(1,2))
     metrics = {}
+    
     if synthetic.sum() > 0:
       metrics['epe_render'] = epe2[synthetic].mean().item()
     non_synthetic = (synthetic==False)
@@ -88,7 +89,7 @@ def sequence_loss(flow_preds, flow_gt, valid,  synthetic, gamma=0.8, max_flow=MA
     metrics['3px'] = (epe < 3).float().mean().item()
     metrics['5px'] = (epe < 5).float().mean().item()
     
-    return flow_loss, metrics
+    return flow_loss, metrics, epe2
 
 
 class Network(LightningModule):
@@ -165,7 +166,7 @@ class Network(LightningModule):
     synthetic = batch[4]
     flow_predictions = self(batch = batch)
 
-    loss, metrics = sequence_loss(flow_predictions, flow, valid, synthetic, self._exp['model']['gamma'])
+    loss, metrics, epe_per_object = sequence_loss(flow_predictions, flow, valid, synthetic, self._exp['model']['gamma'])
 
     if self._estimate_pose:
       
@@ -239,7 +240,17 @@ class Network(LightningModule):
 
         self.log(f'adds_obj'+index_key, res_dict["adds_h_pred"].cpu().item() , on_step=True, on_epoch=True )
         self.log(f'add_s_obj'+index_key, res_dict["add_s_h_pred"].cpu().item() , on_step=True, on_epoch=True )
-        
+        self.plot_pose(
+          model_points = model_points,
+          h_gt = h_gt,
+          h_init = h_init,
+          h_pred = h_pred__pred_pred,
+          pred_valid = pred_valid,
+          img_real_zoom = batch[0],
+          img_real_ori = img_real_ori,
+          K_real = K_real,
+          index = batch_idx
+        )
       else:
         print( "Count SUC", self.count_suc, " Count FAILED", self.count_failed)        
         # print("Force PLOT since Pose Estimation vailed!")
@@ -292,30 +303,28 @@ class Network(LightningModule):
         for k in res_dict.keys():
           self.log(f'{self._mode}_{k}_pred_flow_gt_seg', res_dict[k].mean(), on_step=True, on_epoch=True, prog_bar=False)
         
-    
+    else:
+      idx = batch[5]
+      
     logging_metrices = ['epe', 'epe_real', 'epe_render']
     for met in logging_metrices:
       if met in metrics:
-        index_key = str( int( idx ))
-        self.log(f'{self._mode}_{met}_obj' + index_key, metrics[met], on_step=True, on_epoch=False, prog_bar=True)
-
+        self.log(f'{self._mode}_{met}', metrics[met], on_step=True, on_epoch=False, prog_bar=True)
+    
+    for i in range(BS):
+      obj = str(int(idx[i]))
+      self.log(f'{self._mode}_{met}_obj{obj}', epe_per_object[i].float().item(), on_step=True, on_epoch=False, prog_bar=True)
+          
+          
+      
+    
     self._count_real[self._mode] += (synthetic ==False).sum()
     self._count_render[self._mode] += (synthetic).sum()
     
     self.log(f'{self._mode}_count_real', self._count_real[self._mode], on_step=False, on_epoch=False, prog_bar=False)
     self.log(f'{self._mode}_count_render', self._count_render[self._mode], on_step=False, on_epoch=False, prog_bar=False)
 
-    self.plot_pose(
-      model_points = model_points,
-      h_gt = h_gt,
-      h_init = h_init,
-      h_pred = h_pred__pred_pred,
-      pred_valid = pred_valid,
-      img_real_zoom = batch[0],
-      img_real_ori = img_real_ori,
-      K_real = K_real,
-      index = batch_idx
-    )
+    
     return {'loss': loss, 'pred': flow_predictions, 'target': flow}
 
 

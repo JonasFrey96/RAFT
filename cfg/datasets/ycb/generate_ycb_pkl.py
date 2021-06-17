@@ -2966,7 +2966,7 @@ min_visible_points = 200
 # mode = 'train_mixed'
 
 mode = 'test'
-p = "/media/scratch2/jonfrey/ycb/"
+p = "/home/jonfrey/Datasets/ycb"
 
 candidates = [str(p) for p in Path(p).rglob('*-label.png')]
 
