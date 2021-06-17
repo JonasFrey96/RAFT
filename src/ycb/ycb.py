@@ -9,28 +9,21 @@ if __name__ == "__main__":
   
   print(os.getcwd())
   
-import time
 import random
 import copy
-import math
-import logging
 import os
 import sys
 import pickle
-import glob
 from pathlib import Path
 from PIL import Image
 
 # Frameworks
 import numpy as np
-import cv2
 from scipy.stats import special_ortho_group
 from scipy.spatial.transform import Rotation as R
-import scipy.misc
 import scipy.io as scio
 import torchvision.transforms as transforms
 import torch
-import torchvision
 
 # For flow calculation
 import trimesh
@@ -110,24 +103,56 @@ class YCB(torch.utils.data.Dataset):
       self._camera_idx_list = mappings['camera_idx_list']
       self._length = len( self._base_path_list )
     
-    inc = self._cfg_d.get('increase_real_to_render_ratio', 1)
-    if  inc > 1:
-      real_render = [ i.find("data_syn") for i in self._base_path_list ]
-      real = np.array( real_render  ) == -1
-      real_indices = np.where( real )[0]
-      if mode == 'train': 
-        for i in range( inc-1 ):
-          self._base_path_list += np.array( self._base_path_list)[real_indices].tolist()
-          self._obj_idx_list += np.array( self._obj_idx_list )[real_indices].tolist()
-          self._camera_idx_list += np.array( self._camera_idx_list )[real_indices].tolist()
-          self._length = len( self._base_path_list )
+    
+    # CHANGING RATIO OF SYNTHETIC DATA BY DUPLICATING SYNTHETIC LABELS
+    ratio = self._cfg_d.get('ratio', None) 
+    if not( ratio is None):
+      # sum_val = 0
+      # for v in ratio.values():
+      #   sum_val += v
+      # for k in ratio.keys():
+      #   ratio[k] /= sum_val
+      
+      idxs = {'data':[], 'data_syn':[], 'data_syn_new':[]}
+      for j, p in enumerate( self._base_path_list ):
+        for k in idxs.keys():
+          if p.find(f"/{k}/") != -1:
+            idxs[k].append(j)
+      
+      multiply = {}
+      repeats = [] #contains all the indices that should be repeated. 
+      for id in ['data_syn', 'data_syn_new']:
+        multiply[id] =  len( idxs['data'] )/len( idxs[id] ) * ratio[id]
+        
+        while multiply[id] > 1:
+          # Add all
+          repeats = repeats + idxs[id]
           
+          multiply[id] -= 1
+        
+        elements_to_sample = int( multiply[id]* len( idxs[id] ) )
+        if multiply[id] > 0 and elements_to_sample > 0:
+          repeats = repeats + (np.array(idxs[id])[ np.random.permutation( len(idxs[id]) )[:elements_to_sample] ]).tolist()  
+      repeats = repeats + idxs['data']
+      
+      self._base_path_list = np.array(  self._base_path_list )[ repeats ].tolist()
+      self._obj_idx_list = np.array(  self._obj_idx_list )[ repeats ].tolist()
+      self._camera_idx_list = np.array(  self._camera_idx_list )[ repeats ].tolist()
+      
+      self._length = len( self._base_path_list )
+    
+    
+      idxs = {'data':[], 'data_syn':[], 'data_syn_new':[]}
+      for j, p in enumerate( self._base_path_list ):
+        for k in idxs.keys():
+          if p.find(f"/{k}/") != -1:
+            idxs[k].append(j)
+      print("OUPUT RATIOS", len(idxs['data']),len(idxs['data_syn']),len(idxs['data_syn_new']))
 
 
   def __getitem__(self, index):
     return self.getElement(index, h_real_est=None)
-
-
+  
   def _get_background_image(self, obj_idx):
     while 1:
       index = random.randint(0, len(self)-1)
@@ -165,24 +190,30 @@ class YCB(torch.utils.data.Dataset):
     two problems we face. What is if an object is not visible at all -> meta['obj'] = None
     obj_idx is elemnt 1-21 !!!
     """
-    c = 0
-    for p in self._base_path_list:
-      if p.find('syn') != 0:
-        c +=1 
-
-
     p = self._base_path_list[index]
     obj_idx = self._obj_idx_list[index]
     K = self.K[str(self._camera_idx_list[index])]
     synthetic = p.find('syn') != -1
 
-    img = Image.open(p+"-color.png")
+    img = Image.open(p + "-color.png")
     depth = np.array( Image.open( p+"-depth.png") )
     label = np.array( Image.open( p+"-label.png") )
     meta = scio.loadmat( p+"-meta.mat")
-
     obj = meta['cls_indexes'].flatten().astype(np.int32)
-    obj_idx_in_list = int(np.argwhere(obj == obj_idx))
+    
+    obj_idx_in_list = int( np.argwhere(obj == obj_idx) )
+    if p.find('data_syn_new'):
+      obj_idx_in_list = 0
+      
+    print( "\n \n")  
+    print( p )
+    print( "unique: ", np.unique(label)) 
+    # print( "meta: ", meta)
+    print( "obj: ", obj)
+    print( "obj_idx: ", obj_idx)
+      
+    
+      
     
     h_gt = np.eye(4)
     h_gt[:3,:4] =  meta['poses'][:, :, obj_idx_in_list]   
@@ -205,6 +236,7 @@ class YCB(torch.utils.data.Dataset):
     model_points = np.delete(self._pcd_cad_list[obj_idx-1], dellist, axis=0).astype(np.float32)
     
     cam_flag = self._camera_idx_list[index]
+    idx = torch.LongTensor([int(obj_idx) - 1]) 
     
     if h_real_est is None:
       m = self._cfg_d.get( 'init_mode', 'pose_cnn')
@@ -226,7 +258,7 @@ class YCB(torch.utils.data.Dataset):
         nr = self._cfg_d['output_cfg'].get('noise_rotation', 30) 
         h_real_est = add_noise( h_gt, nt, nr)
     
-    idx = torch.LongTensor([int(obj_idx) - 1]) 
+    
     res_get_render = self.get_rendered_data( img_arr, depth, label, model_points, int(obj_idx), K, cam_flag, h_gt, h_real_est)
     if res_get_render is False:
       if self.err:
@@ -286,7 +318,8 @@ class YCB(torch.utils.data.Dataset):
               img_ori, 
               p) 
     else:
-      return real, render, flow, valid.float(), torch.tensor( synthetic )
+      
+      return real, render, flow, valid.float(), torch.tensor( synthetic ), idx ,
 
   def get_rendered_data(self, img, depth_real, label, model_points, obj_idx, K_real, cam_flag, h_gt, h_real_est=None):
     """Get Rendered Data

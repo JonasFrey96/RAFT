@@ -25,10 +25,16 @@ def move_datasets(datasets):
       tar = os.path.join( env[dataset],f'{dataset}.tar')
       name = (tar.split('/')[-1]).split('.')[0]
         
+      if dataset == "data_syn_new":
+        dataset = "ycb/data_syn_new"
+        
       if not os.path.exists(os.path.join(scratchdir, dataset ) ):
         
         try:  
-          cmd = f"tar -xvf {tar} -C $TMPDIR >/dev/null 2>&1"
+          if dataset.find("data_syn_new") != -1:
+            cmd = f"tar -xvf {tar} -C $TMPDIR/ycb >/dev/null 2>&1"
+          else:  
+            cmd = f"tar -xvf {tar} -C $TMPDIR >/dev/null 2>&1"
           
           print( f'Start moveing dataset-{dataset}: {cmd}')
           os.system(cmd)

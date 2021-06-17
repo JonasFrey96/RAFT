@@ -7,31 +7,24 @@ sys.path.append(os.path.join(os.getcwd() + '/core'))
 sys.path.append(os.path.join(os.getcwd() + '/segmentation'))
 import coloredlogs
 coloredlogs.install()
-from collections import OrderedDict
-import time
 import shutil
 import datetime
 import argparse
 import signal
 import yaml
-import logging
 from pathlib import Path
-import copy
 # Frameworks
 import torch
-from torch.utils.tensorboard import SummaryWriter
 
 from pytorch_lightning import seed_everything, Trainer
 from pytorch_lightning.callbacks import EarlyStopping
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.callbacks import LearningRateMonitor
-from pytorch_lightning.callbacks import Callback
 from pytorch_lightning.profiler import AdvancedProfiler
 
 # Costume Modules
 from src_utils import file_path, load_yaml, get_neptune_logger, get_tensorboard_logger
 from lightning import Network
-from src_utils import DotDict
 import datasets
 
 if __name__ == "__main__":
@@ -42,7 +35,7 @@ if __name__ == "__main__":
   signal.signal(signal.SIGTERM, signal_handler)
   
   parser = argparse.ArgumentParser()    
-  parser.add_argument('--exp', type=file_path, default='cfg/exp/exp.yml',
+  parser.add_argument('--exp', type=file_path, default='cfg/exp/1/exp.yml',
                       help='The main experiment yaml file.')
 
   args = parser.parse_args()
