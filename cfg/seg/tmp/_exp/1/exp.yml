@@ -1,7 +1,7 @@
 name: /home/jonfrey/results/rpose/seg_exp/4h_test_run
 neptune_project_name: rpose
 offline_mode: false
-timestamp: false
+timestamp: true
 weights_restore: false
 weights_restore2: true
 checkpoint_restore: false

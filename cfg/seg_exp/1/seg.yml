@@ -1,7 +1,7 @@
 name: seg_exp/24h_long_run_fully_working
 neptune_project_name: rpose
 offline_mode: false
-timestamp: false
+timestamp: true
 weights_restore: false
 weights_restore2: true
 

@@ -15,22 +15,14 @@
 			"envFile": "/home/jonfrey/RPOSE/cfg/debug/debug.env"
 		},
 		{
-			"name": "RPOSE Segmentation",
+			"name": "RPOSE Current File",
 			"type": "python",
 			"request": "launch",
-			"program": "/home/jonfrey/RPOSE/segmentation/main_segmentation.py",
+			"program": "${file}",
 			"console": "integratedTerminal",
 			"cwd": "/home/jonfrey/RPOSE",
 			"python.pythonPath": "/home/jonfrey/miniconda3/envs/track4/bin/python",
-		},
-		{
-			"name": "CL",
-			"type": "python",
-			"request": "launch",
-			"program": "/home/jonfrey/CL/train.py",
-			"console": "integratedTerminal",
-			"cwd": "/home/jonfrey/CL",
-			"python.pythonPath": "/home/jonfrey/miniconda3/envs/track4/bin/python",
+			"envFile": "/home/jonfrey/RPOSE/cfg/debug/debug.env"
 		}
 	]
 }
