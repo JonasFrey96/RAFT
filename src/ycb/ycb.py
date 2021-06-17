@@ -202,7 +202,7 @@ class YCB(torch.utils.data.Dataset):
     obj = meta['cls_indexes'].flatten().astype(np.int32)
     
     obj_idx_in_list = int( np.argwhere(obj == obj_idx) )
-    if p.find('data_syn_new'):
+    if p.find('data_syn_new') != -1:
       obj_idx_in_list = 0
       
     print( "\n \n")  
@@ -211,8 +211,8 @@ class YCB(torch.utils.data.Dataset):
     # print( "meta: ", meta)
     print( "obj: ", obj)
     print( "obj_idx: ", obj_idx)
-      
-    
+    print( "obj_idx_in_list: ", obj_idx_in_list)
+    print("meta pose", meta['poses'].shape)
       
     
     h_gt = np.eye(4)
@@ -251,7 +251,12 @@ class YCB(torch.utils.data.Dataset):
       
       if h_real_est is None and self.if_err_ret_none:
         print("PoseCNN failed")
-        return (None, idx)
+
+        if self.if_err_ret_none:
+          return (None, idx)
+        else:
+          new_idx = random.randint(0, len(self))
+          return self[new_idx]
 
       if m == 'noise' or h_real_est is None:
         nt = self._cfg_d['output_cfg'].get('noise_translation', 0.02) 
@@ -266,9 +271,9 @@ class YCB(torch.utils.data.Dataset):
       
       if self.if_err_ret_none:
         return (None, idx)
-
-      new_idx = random.randint(0, len(self))
-      return self[new_idx]
+      else:
+        new_idx = random.randint(0, len(self))
+        return self[new_idx]
 
     real = res_get_render[0]
     render = res_get_render[1]
@@ -318,8 +323,7 @@ class YCB(torch.utils.data.Dataset):
               img_ori, 
               p) 
     else:
-      
-      return real, render, flow, valid.float(), torch.tensor( synthetic ), idx ,
+      return (real, render, flow, valid.float(), torch.tensor( synthetic ), idx)
 
   def get_rendered_data(self, img, depth_real, label, model_points, obj_idx, K_real, cam_flag, h_gt, h_real_est=None):
     """Get Rendered Data

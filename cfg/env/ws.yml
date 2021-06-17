@@ -1,4 +1,5 @@
 ycb: /home/jonfrey/Datasets/ycb
 kitti: /home/jonfrey/datasets/kitti
 base: /home/jonfrey/Results_RPOSE
+data_syn_new: /home/jonfrey/Datasets/ycb
 workstation: True
