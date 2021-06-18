@@ -201,20 +201,12 @@ class YCB(torch.utils.data.Dataset):
     meta = scio.loadmat( p+"-meta.mat")
     obj = meta['cls_indexes'].flatten().astype(np.int32)
     
-    obj_idx_in_list = int( np.argwhere(obj == obj_idx) )
+    
     if p.find('data_syn_new') != -1:
       obj_idx_in_list = 0
-      
-    print( "\n \n")  
-    print( p )
-    print( "unique: ", np.unique(label)) 
-    # print( "meta: ", meta)
-    print( "obj: ", obj)
-    print( "obj_idx: ", obj_idx)
-    print( "obj_idx_in_list: ", obj_idx_in_list)
-    print("meta pose", meta['poses'].shape)
-      
-    
+    else:
+	    obj_idx_in_list = int( np.argwhere(obj == obj_idx) )
+
     h_gt = np.eye(4)
     h_gt[:3,:4] =  meta['poses'][:, :, obj_idx_in_list]   
     h_gt = h_gt.astype(np.float32)
@@ -247,7 +239,7 @@ class YCB(torch.utils.data.Dataset):
       elif m == 'tracking_gt':
         h_real_est = get_init_pose_track_gt( obj_idx, p, h_gt, model_points, K , size=(self._h,self._w))
       elif m == 'noise_adaptive': 
-        h_real_est = get_adaptive_noise(model_points, h_gt, K, obj_idx = obj_idx , factor=5, rot_deg = 30)
+        h_real_est = get_adaptive_noise(model_points, h_gt, K, obj_idx = obj_idx , factor=5, rot_deg = self._cfg_d['output_cfg'].get('noise_rotation', 30) )
       
       if h_real_est is None and self.if_err_ret_none:
         print("PoseCNN failed")
@@ -263,8 +255,11 @@ class YCB(torch.utils.data.Dataset):
         nr = self._cfg_d['output_cfg'].get('noise_rotation', 30) 
         h_real_est = add_noise( h_gt, nt, nr)
     
-    
-    res_get_render = self.get_rendered_data( img_arr, depth, label, model_points, int(obj_idx), K, cam_flag, h_gt, h_real_est)
+    try:
+      res_get_render = self.get_rendered_data( img_arr, depth, label, model_points, int(obj_idx), K, cam_flag, h_gt, h_real_est)
+    except:
+      res_get_render = False
+      
     if res_get_render is False:
       if self.err:
         print("Violation in get render data")
@@ -387,6 +382,13 @@ class YCB(torch.utils.data.Dataset):
     ren_h = b_ren.height()
     ren_w = b_ren.width()
     ren_tl = b_ren.tl
+    if (ren_h < 20 or ren_w < 20 or
+      img_ren.shape[1] < 20 or img_ren.shape[2] < 20 or 
+      depth_ren.shape[1] < 20 or depth_ren.shape[2] < 20):
+
+      print( "img_ren", img_ren.shape, depth_ren.shape )
+      return False
+
     render_img = b_ren.crop(img_ren[0], scale=True, mode="bilinear",
                 output_h = output_h, output_w = output_w) # Input H,W,C        
     render_d = b_ren.crop(depth_ren[0][:,:,None], scale=True, mode="nearest",
@@ -411,11 +413,18 @@ class YCB(torch.utils.data.Dataset):
     real_h = b_real.height()
     real_w = b_real.width()
     real_tl = b_real.tl
+
+    
+    if (real_h < 20 or real_w < 20 or
+      img.shape[0] < 20 or img.shape[1] < 20 or 
+      depth_real.shape[0] < 20 or depth_real.shape[1] < 20 or
+      label.shape[0] < 20 or label.shape[1] < 20 ):
+      print( "idl", img.shape, depth_real.shape, label.shape )
+      return False 
+    
     real_img = b_real.crop(torch.from_numpy(img).type(torch.float32) , 
                  scale=True, mode="bilinear",
                  output_h = output_h, output_w = output_w)
-    
-    
     
     real_d = b_real.crop(torch.from_numpy(depth_real[:, :,None]).type(
       torch.float32), scale=True, mode="nearest",
@@ -787,7 +796,7 @@ def get_adaptive_noise(model_points, h_gt, K, obj_idx = 0, factor=5, rot_deg = 3
     
     if obj_idx == 12:
         while True:
-            x = R.from_euler('xy', np.random.uniform( -rot_deg,rot_deg,(2) ), degrees=True).as_matrix() @ h_gt[:3,:3]
+            x = R.from_euler('xy', np.random.uniform( -180,180,(2) ), degrees=True).as_matrix().astype(np.float32) @ h_gt[:3,:3]
             if abs(np.degrees( rel_h(h_gt[:3,:3], x))) < rot_deg:
               break
     
