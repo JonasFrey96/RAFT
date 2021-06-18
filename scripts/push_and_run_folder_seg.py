@@ -92,15 +92,13 @@ if len(model_paths) == 0:
   logging.info('Model Paths Empty!')
   
 else:  
-  
- 
   with open(os.path.join( home, 'RPOSE', env )) as f:
     doc = yaml.load(f, Loader=yaml.FullLoader) 
     base = doc['base']
   model_paths = [os.path.join(base,i) for i in model_paths] 
 
   # Push to cluster 
-  cmd = f"""rsync -a --delete --exclude='.git/' --exclude='__pycache__/' --exclude='cfg/exp/tmp/*' {home}/RPOSE/* {login}:/cluster/home/jonfrey/RPOSE"""
+  cmd = f"""rsync -a --delete --exclude='.git/' --exclude='__pycache__/' --exclude='*.ipynb' --exclude='cfg/exp/tmp/*' {home}/RPOSE/* {login}:/cluster/home/jonfrey/RPOSE"""
   os.system(cmd)
 
   # Executue commands on cluster
