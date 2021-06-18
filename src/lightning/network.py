@@ -110,7 +110,7 @@ class Network(LightningModule):
       self._logged_images_max = {'train': 2, 'val': 2, 'test': 2}
     
     self._type = torch.float16 if exp['trainer'].get('precision',32) == 16 else torch.float32
-    self._visu = Visualizer( os.path.join ( exp['name'], "visu"), num_classes=2 )
+    self._visu = Visualizer( os.path.join ( exp['name'], "visu"), num_classes=2 ,store=False)
 
     if self._exp.get('mode','train') == 'test':
       self._estimate_pose = True
@@ -311,19 +311,16 @@ class Network(LightningModule):
       if met in metrics:
         self.log(f'{self._mode}_{met}', metrics[met], on_step=True, on_epoch=False, prog_bar=True)
     
-    for i in range(BS):
-      obj = str(int(idx[i]))
-      self.log(f'{self._mode}_{met}_obj{obj}', epe_per_object[i].float().item(), on_step=True, on_epoch=False, prog_bar=True)
+    if self._exp.get( 'log',{}).get('individual_obj',{}).get(self._mode, False):
+      for i in range(BS):
+        obj = str(int(idx[i]))
+        self.log(f'{self._mode}_{met}_obj{obj}', epe_per_object[i].float().item(), on_step=True, on_epoch=False, prog_bar=True)
           
-          
-      
-    
     self._count_real[self._mode] += (synthetic ==False).sum()
     self._count_render[self._mode] += (synthetic).sum()
     
     self.log(f'{self._mode}_count_real', self._count_real[self._mode], on_step=False, on_epoch=False, prog_bar=False)
     self.log(f'{self._mode}_count_render', self._count_render[self._mode], on_step=False, on_epoch=False, prog_bar=False)
-
     
     return {'loss': loss, 'pred': flow_predictions, 'target': flow}
 
@@ -338,7 +335,8 @@ class Network(LightningModule):
             K = K_real[b].cpu(), 
             tag = 'Test_gt',
             epoch = index,
-            not_log = True)
+            not_log = True,
+            store = False)
         img_pred = self._visu.plot_estimated_pose( 
             img = img_real_ori[b].cpu().numpy(), 
             points = model_points[b].cpu(), 
@@ -346,7 +344,7 @@ class Network(LightningModule):
             K = K_real[b].cpu(), 
             tag = 'Test_pred',
             epoch = index, 
-            not_log = True)
+            not_log = True, store= False)
 
         img_init = self._visu.plot_estimated_pose( 
             img = img_real_ori[b].cpu().numpy(), 
@@ -354,11 +352,11 @@ class Network(LightningModule):
             H = h_init[b].cpu(),
             K = K_real[b].cpu(), 
             tag = 'Test_init',
-            not_log = True)
+            not_log = True, store= False)
 
         ass = np.concatenate( [img_init, img_pred, img_gt], axis = 1)
         print(ass.shape)
-        self._visu.plot_image( img= ass, tag = 'Pose_INIT_PRED_GT', epoch=index)
+        self._visu.plot_image( img= ass, tag = 'Pose_INIT_PRED_GT', epoch=index, store= False)
 
   def plot(self, flow_gt, flow_pred, img1, img2, valid ,force = False ):
       if self._logged_images[self._mode] < self._logged_images_max[self._mode] or force:
@@ -380,8 +378,8 @@ class Network(LightningModule):
           idx = self._logged_images[self._mode] 
           
           
-          # nr = self._logged_images[self._mode] + self.trainer.current_epoch * self._logged_images_max[self._mode]
-          self._visu.plot_image( img= img, store=True, tag=f"Flow_{self._mode}_{name}", epoch=  self._logged_images[self._mode] )
+          nr = self._logged_images[self._mode] + self.trainer.current_epoch * (self._logged_images_max[self._mode] + 1)
+          self._visu.plot_image( img= img, tag=f"Flow_{self._mode}_{name}", epoch= nr, store= False )
           self._logged_images[self._mode] += 1
 
   def plot_seg(self, ori_real, ori_render, pred, target,force = False, idx = None, index= 0):
@@ -398,11 +396,11 @@ class Network(LightningModule):
       grid_ori_render = make_grid(ori_render,nrow = rows, padding = 2,
               scale_each = False, pad_value = 0)
       
-      self._visu.plot_detectron( img = grid_ori_real , label = grid_pred[0,:,:] , tag = 'PRED SEG', method="left")
-      self._visu.plot_image( img = grid_ori_render , tag='Segmentation_left_pred__right_render_img', method= 'right', epoch= index )
+      self._visu.plot_detectron( img = grid_ori_real , label = grid_pred[0,:,:] , tag = 'PRED SEG', method="left", store= False)
+      self._visu.plot_image( img = grid_ori_render , tag='Segmentation_left_pred__right_render_img', method= 'right', epoch= index, store= False )
 
-      self._visu.plot_detectron( img = grid_ori_real , label = grid_pred[0,:,:] , tag = 'PRED SEG', method="left")
-      self._visu.plot_detectron( img = grid_ori_real , label = grid_target[0,:,:],  tag='Segmentation_left_pred__right_gt',  method="right", epoch= index )
+      self._visu.plot_detectron( img = grid_ori_real , label = grid_pred[0,:,:] , tag = 'PRED SEG', method="left", store= False)
+      self._visu.plot_detectron( img = grid_ori_real , label = grid_target[0,:,:],  tag='Segmentation_left_pred__right_gt',  method="right", epoch= index , store= False)
 
   def training_step_end(self, outputs):
     # Log replay buffer stats
