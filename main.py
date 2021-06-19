@@ -35,7 +35,7 @@ if __name__ == "__main__":
   signal.signal(signal.SIGTERM, signal_handler)
   
   parser = argparse.ArgumentParser()    
-  parser.add_argument('--exp', type=file_path, default='cfg/exp/1/exp.yml',
+  parser.add_argument('--exp', type=file_path, default='cfg/exp/2/ratio_1_1_1_expand_1_3_adaptive.yml',
                       help='The main experiment yaml file.')
 
   args = parser.parse_args()
@@ -122,7 +122,6 @@ if __name__ == "__main__":
       **exp['cb_checkpoint']['cfg']
     )
     cb_ls.append( checkpoint_callback )
-  
   
   if not exp.get('offline_mode', False):
     logger = get_neptune_logger(exp=exp,env=env,

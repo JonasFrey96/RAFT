@@ -309,12 +309,12 @@ class Network(LightningModule):
     logging_metrices = ['epe', 'epe_real', 'epe_render']
     for met in logging_metrices:
       if met in metrics:
-        self.log(f'{self._mode}_{met}', metrics[met], on_step=True, on_epoch=False, prog_bar=True)
+        self.log(f'{self._mode}_{met}', metrics[met], on_step=True, on_epoch=True, prog_bar=True)
     
     if self._exp.get( 'log',{}).get('individual_obj',{}).get(self._mode, False):
       for i in range(BS):
         obj = str(int(idx[i]))
-        self.log(f'{self._mode}_{met}_obj{obj}', epe_per_object[i].float().item(), on_step=True, on_epoch=False, prog_bar=True)
+        self.log(f'{self._mode}_{met}_obj{obj}', epe_per_object[i].float().item(), on_step=True, on_epoch=True, prog_bar=True)
           
     self._count_real[self._mode] += (synthetic ==False).sum()
     self._count_render[self._mode] += (synthetic).sum()

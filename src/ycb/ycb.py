@@ -247,7 +247,7 @@ class YCB(torch.utils.data.Dataset):
         if self.if_err_ret_none:
           return (None, idx)
         else:
-          new_idx = random.randint(0, len(self))
+          new_idx = random.randint(0, len(self)-1)
           return self[new_idx]
 
       if m == 'noise' or h_real_est is None:
@@ -267,7 +267,7 @@ class YCB(torch.utils.data.Dataset):
       if self.if_err_ret_none:
         return (None, idx)
       else:
-        new_idx = random.randint(0, len(self))
+        new_idx = random.randint(0, len(self)-1)
         return self[new_idx]
 
     real = res_get_render[0]
