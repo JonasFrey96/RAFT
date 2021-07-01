@@ -85,7 +85,17 @@ def flow_to_trafo_PnP(*args, **kwargs):
     render_d_ind_w= torch.linspace(0 ,639 , 640, device=u_map.device)[None,:].repeat(480,1)
     render_d_ind_h = torch.clamp((render_d_ind_h - u_map).type(torch.float32) ,0,479).type( torch.long )[flow_mask]
     render_d_ind_w = torch.clamp((render_d_ind_w - v_map).type(torch.float32),0,639).type( torch.long )[flow_mask] 
-    index = render_d_ind_h*640 + render_d_ind_w # hacky indexing along two dimensions
+    if render_d_ind_h.shape[0] < 50:
+        return False, torch.eye(4, dtype= u_map.dtype, device=u_map.device ), False
+    # Avoid two different 3D points pointing to the same 2D pixels
+    res,indices = np.unique( torch.stack( [ render_d_ind_h, render_d_ind_w] ).numpy(), axis=1,  return_index=True )
+    indices = torch.from_numpy ( indices )
+    render_d_ind_h = render_d_ind_h[indices] 
+    render_d_ind_w = render_d_ind_w[indices]
+    real_pixels = real_pixels[indices]
+
+    # Hacky indexing along two dimensions
+    index = render_d_ind_h*640 + render_d_ind_w
 
     P_crop_d  = P_crop_d[index] 
 
@@ -123,9 +133,6 @@ def flow_to_trafo_PnP(*args, **kwargs):
     tvec = h_real_est[:3,3].cpu().numpy().astype(np.float32)
     # calculate PnP between the pixels coordinates in the real image and the corrosponding points in the origin frame
     
-    
-
-
     if kwargs.get("method","solvePnPRansac") == "solvePnPRansac":
         retval, r_vec2, t_vec2, inliers = cv2.solvePnPRansac(objectPoints, \
         imagePoints, 
@@ -134,7 +141,8 @@ def flow_to_trafo_PnP(*args, **kwargs):
         rvec = rvec,
         tvec = tvec,
         iterationsCount= kwargs.get("iterationsCount",25), reprojectionError= kwargs.get("reprojectionError",3) )
-        ratio =  inliers.shape[0] / imagePoints.shape[0] 
+        ratio =  inliers.shape[0] / imagePoints.shape[0]
+
     elif kwargs.get("method","solvePnPRefineLM") == "solvePnPRefineLM":
         r_vec2, t_vec2 = cv2.solvePnPRefineLM(copy.deepcopy(objectPoints), \
             copy.deepcopy(imagePoints), 
@@ -152,3 +160,22 @@ def flow_to_trafo_PnP(*args, **kwargs):
     repro_error = np.linalg.norm( imagePointsEst[:,0,:]-imagePoints, ord=2, axis=1 ).mean()
 
     return True, torch.tensor(h, device=u_map.device ).type(u_map.dtype), 1-repro_error
+
+# if __name__ == "__main__":
+#     def flow_to_trafo_PnP(
+#         reprojectionError",3
+#         method
+#         iterationsCount
+#         real_br
+#         real_tl
+#         ren_br
+#         ren_tl
+#         flow_mask
+#         u_map
+#         v_map
+#         K_ren
+#         render_d
+#         h_render
+#         h_real_est
+#     )
+   

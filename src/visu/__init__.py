@@ -1,4 +1,4 @@
-from .visualizer import Visualizer, plot_pcd
+from .visualizer import Visualizer
 __all__ = (
-    'Visualizer', 'plot_pcd'
+    'Visualizer'
 )

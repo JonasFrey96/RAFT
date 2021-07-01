@@ -13,7 +13,7 @@ import torch.nn.functional as F
 
 
 class FlowAugmentor:
-    def __init__(self, crop_size, min_scale=-0.2, max_scale=0.5, do_flip=True):
+    def __init__(self, crop_size, min_scale=-0.2, max_scale=0.5, do_flip=True, **kwargs):
         
         # spatial augmentation params
         self.crop_size = crop_size
@@ -120,7 +120,7 @@ class FlowAugmentor:
         return img1, img2, flow
 
 class SparseFlowAugmentor:
-    def __init__(self, crop_size, min_scale=-0.2, max_scale=0.5, do_flip=False):
+    def __init__(self, crop_size, min_scale=-0.2, max_scale=0.5, do_flip=False, **kwargs):
         # spatial augmentation params
         self.crop_size = crop_size
         self.min_scale = min_scale

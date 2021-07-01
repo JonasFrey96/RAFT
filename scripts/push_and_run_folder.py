@@ -44,7 +44,6 @@ parser.add_argument('--script', default='supervisor', choices=['main', 'supervis
 parser.add_argument('--fast_gpu', default=True, help="Select script to start")
 parser.add_argument('--host', default="euler", choices=['leonhard', 'euler'])
 
-
 args = parser.parse_args()
 if args.host == 'leonhard':
   login = "jonfrey@login.leonhard.ethz.ch"
@@ -76,13 +75,14 @@ else:
   raise Exception
 scratch = int( int(args.scratch)*1000 / w)
 fake = args.fake
-ign = args.ignore_workers 
+ign = args.ignore_workers
 # Get all model_paths
 home = expanduser("~")
 p = f'{home}/RPOSE/cfg/exp/{args.exp}/'
 exps = [str(p) for p in Path(p).rglob('*.yml') if str(p).find('_tmp.yml') == -1]
 model_paths = []
 logging.info('')
+print(p)
 logging.info('Found Config Files in directory:')
 for j,e in enumerate(exps):
   logging.info('   ' + e)
@@ -93,6 +93,9 @@ for j,e in enumerate(exps):
     logging.warning('   Error: Number of workers dosent align with requested cores!')
     logging.warning('   Error: Either set ignore_workers flag true or change config')
     exps.remove(e)
+
+
+
   # Validate if config trainer settings fits with job.
   elif gpus > 1 and doc['trainer']['accelerator'].find('ddp') == -1:
     logging.warning('   Error: Mutiple GPUs but not using ddp')

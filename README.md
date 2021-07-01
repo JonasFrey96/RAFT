@@ -23,8 +23,6 @@ TODO:
 - PoseRejection Module
 - Evaluate increase in performance
 
-
-
 ### DONE:
 - Create inital Poses using PoseCNN
 - Visu Segmentation and Flow

@@ -1,5 +1,6 @@
 import os
-import sys 
+import sys
+
 os.chdir(os.path.join(os.getenv('HOME'), 'RPOSE'))
 sys.path.insert(0, os.getcwd())
 sys.path.append(os.path.join(os.getcwd() + '/src'))
@@ -24,9 +25,9 @@ from pytorch_lightning.profiler import AdvancedProfiler
 
 # Costume Modules
 from src_utils import file_path, load_yaml, get_neptune_logger, get_tensorboard_logger
-from lightning import Network
+from lightning import Network, TimeCallback
 import datasets
-
+import copy
 if __name__ == "__main__":
   def signal_handler(signal, frame):
     print('exiting on CRTL-C')
@@ -35,7 +36,7 @@ if __name__ == "__main__":
   signal.signal(signal.SIGTERM, signal_handler)
   
   parser = argparse.ArgumentParser()    
-  parser.add_argument('--exp', type=file_path, default='cfg/exp/2/ratio_1_1_1_expand_1_3_adaptive.yml',
+  parser.add_argument('--exp', type=file_path, default="cfg/exp/final/0_training_flow/debug/debug.yml",
                       help='The main experiment yaml file.')
 
   args = parser.parse_args()
@@ -132,6 +133,9 @@ if __name__ == "__main__":
     logger = get_tensorboard_logger(exp=exp,env=env,
         exp_p =exp_cfg_path, env_p = env_cfg_path)
   
+  if exp['cb_time']['active']:
+    cb_ls.append( TimeCallback( **exp['cb_time'].get('cfg',{})) )
+
   # WRITE BACK NEW CONF FOR OTHER DDPs
   if local_rank == 0:
     rm = exp_cfg_path.find('cfg/exp/') + len('cfg/exp/')
@@ -146,9 +150,16 @@ if __name__ == "__main__":
   else:
     exp['trainer']['profiler']  = False
   
+  if env["workstation"]:
+    
+    for n in ["test", "val", "train"]:
+      exp[n+"_dataset"]["loader"]["num_workers"] = 4
+
+
   # TRAINER
   if exp.get('checkpoint_restore', False):
     p = os.path.join( env['base'], exp['checkpoint_load'])
+
     trainer = Trainer( **exp['trainer'],
       default_root_dir = model_path,
       callbacks=cb_ls, 
@@ -165,14 +176,21 @@ if __name__ == "__main__":
     p = os.path.join( env['base'],exp['checkpoint_load'])
     if os.path.isfile( p ):
       res = torch.load( p )
-      out = model.load_state_dict( res['state_dict'], 
+      
+      if p.find('.pth') != -1:
+        msd = {k.replace('module', "model"):v for k,v in res.items()}
+      else:
+        msd = res['state_dict']
+      out = model.load_state_dict( msd, 
               strict=False)
       print( "Restoere weights from ckpts", out)
 
   if exp.get('weights_restore_seg',False) and model._estimate_pose == True:
     p = os.path.join( env['base'],exp['checkpoint_load_seg'])
-    if os.path.isfile( p ):
+    if os.path.isfile( p ):      
       res = torch.load( p )
+
+      
       new_statedict = {}
       for (k,v) in res['state_dict'].items():
         new_statedict[k.replace('model','seg') ] = v
@@ -181,7 +199,7 @@ if __name__ == "__main__":
               strict=False)
       print( "Restore_seg weights from ckpts", out)
   
-  if exp.get("mode","train") == "train":
+  if exp.get("mode","train").find("train") != -1:
     train_dataloader = datasets.fetch_dataloader( exp['train_dataset'], env )
     val_dataloader = datasets.fetch_dataloader( exp['val_dataset'], env )
     val_dataloader.dataset.deterministic_random_shuffel()
@@ -189,14 +207,38 @@ if __name__ == "__main__":
                           train_dataloader= train_dataloader,
                           val_dataloaders= val_dataloader)
 
-  elif exp.get("mode","train") == "test":
-    test_dataloader = datasets.fetch_dataloader( exp['test_dataset'], env )
-    
-    # test_dataloader.dataset.deterministic_random_shuffel()
+  if exp.get("mode","train").find("test") != -1:
+    # exp['weights_restore_seg'] = True
+    exp_eval = copy.deepcopy( exp )
+    exp_eval['weights_restore'] = True
 
-    trainer.test(model = model,
-        test_dataloaders = test_dataloader,
-        ckpt_path =os.path.join( env['base'],exp['checkpoint_load']) )
+    cl = exp_eval['name']+'last.ckpt'
+    cl[cl.find(env['base'])+len(env['base']):]
+    exp_eval['checkpoint_load'] = cl
+    exp_eval['mode'] = "test"
+    from lightning import Evaluator
+    torch.cuda.empty_cache()
+    inference_manager = Evaluator(exp_eval, env)
+
+    test_dataloader = datasets.fetch_dataloader( exp['test_dataset'], env )
+
+    inference_manager._inferencer.load_state_dict( model.state_dict(), strict=False)
+    # test_dataloader.dataset.deterministic_random_shuffel()
+    p = os.path.join( env['base'],exp['checkpoint_load_seg'])
+    if os.path.isfile( p ):
+      res = torch.load( p )
+      new_statedict = {}
+      for (k,v) in res['state_dict'].items():
+        new_statedict[k.replace('model','seg') ] = v
+      out = inference_manager._inferencer.load_state_dict( new_statedict, 
+              strict=False)
+      print( "Restore_seg weights from ckpts", out)
+
+    inference_manager.evaluate_full_dataset(test_dataloader)
+
+    # trainer.test(model = model,
+    #     test_dataloaders = test_dataloader,
+    #     ckpt_path =os.path.join( env['base'],exp['checkpoint_load']) )
           
   try:
     logger.experiment.stop()

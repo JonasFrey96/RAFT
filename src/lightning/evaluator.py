@@ -8,17 +8,11 @@ sys.path.append(os.path.join(os.getcwd() + '/segmentation'))
 
 import coloredlogs
 coloredlogs.install()
-from collections import OrderedDict
-import time
 import shutil
 import datetime
 import argparse
-import signal
-import yaml
-import logging
 from pathlib import Path
-import copy
-
+import os
 import torch
 from src_utils import file_path, load_yaml
 import datasets
@@ -29,6 +23,7 @@ import numpy as np
 from enum import Enum
 from ycb.rotations import so3_relative_angle
 from scipy.stats import special_ortho_group
+import neptune.new as neptune
 
 def expand_to_batch(batch, device):
   ret = []
@@ -50,7 +45,16 @@ class Mode(Enum):
   TRACKING = 1
   REFINEMENT = 2
   MUTIPLE_INIT_POSES = 3
-
+  
+def str_to_mode(s):
+  if s == "MUTIPLE_INIT_POSES":
+    return  Mode.MUTIPLE_INIT_POSES
+  elif s == "REFINEMENT":
+    return  Mode.REFINEMENT
+  elif s == "TRACKING":
+    return  Mode.TRACKING
+  else:
+    raise Exception
 def rel_h (h1,h2):
   return so3_relative_angle(torch.tensor( h1 ) [:3,:3][None], torch.tensor( h2 ) [:3,:3][None])
   
@@ -66,22 +70,47 @@ def add_noise(h, nt = 0.01, nr= 30):
 
 # Implements 
 class Evaluator():
-  def __init__(self, exp, env):
+  def __init__(self, exp, env, log=True):
     super().__init__()
+    self._log = log
+    if self._log:
+      
+      files = [ str(s) for s in Path( exp["name"]).rglob("*.yml") ]
+      
+      if env['workstation']:
+
+        self._run = neptune.init(project='jonasfrey96/rpose',
+                    api_token=os.environ["NEPTUNE_API_TOKEN"], tags= [exp['name'],"workstation_"+str(env['workstation']) ],
+                    source_files = files)
+      else:
+        self._run = neptune.init(project='jonasfrey96/rpose',
+            api_token=os.environ["NEPTUNE_API_TOKEN"], proxies={'http': 'http://proxy.ethz.ch:3128',
+            'https': 'http://proxy.ethz.ch:3128'}, tags= [exp['name'],"workstation_"+str(env['workstation']) ],
+            source_files  = files)
+        
+    print(exp)
+    print(exp['name'])
+    print("Flow Checkpoint: ", exp['checkpoint_load'])
+    print("Segm Checkpoint: ", exp['checkpoint_load_seg'])
     self._exp = exp
     self._env = env
     self._val = exp.get('val', {})
     self._inferencer = Inferencer(exp, env)
     self.device= 'cuda'
     self._inferencer.to(self.device)
-    self.iterations = 4
-    self.mode = Mode.MUTIPLE_INIT_POSES  #MUTIPLE_INIT_POSES 
-  
+    self.iterations = exp['eval_cfg']['iterations']
+    
+
+    self.mode = str_to_mode(exp['eval_cfg']['mode'])  #MUTIPLE_INIT_POSES 
+  def __del__(self):
+    if self._log:
+      # Stop logging
+      self._run.stop()
+
   @torch.no_grad()
   def evaluate_full_dataset(self, test_dataloader):
     ycb = test_dataloader.dataset
     ycb.deterministic_random_shuffel()
-    print("_base_path_list", ycb._base_path_list)
     ycb.estimate_pose = True 
     ycb.err = True
     ycb.valid_flow_minimum = 0 
@@ -93,6 +122,9 @@ class Evaluator():
     add_s = np.zeros( (elements,self.iterations) )
     add_s[:,:] = np.inf
     idx_arr = np.zeros( (elements) )
+
+    epe = np.zeros( (elements,self.iterations) )
+    epe[:,:] = np.inf
 
     init_adds_arr = np.zeros( (elements))
     init_add_s_arr = np.zeros( (elements))
@@ -107,19 +139,22 @@ class Evaluator():
 
     # Iterate over full test dataset list
     for i in range( elements ):
-      if i == 200:
-        b = f"/home/jonfrey/RPOSE/notebooks/{self.mode}_data.pkl" 
+      if i % 1000 == 0:
+        st = self._exp['eval_cfg']["output_filename"] 
+        b = os.path.join(self._exp["name"], f"{self.mode}_{st}_data_{i}.pkl")
         dic = {
           'add_s' : add_s,
           'adds': adds,
           'idx_arr': idx_arr,
           'ratios_arr': ratios_arr,
           'valid_corrospondences': valid_corrospondences,
+          'init_adds_arr': init_adds_arr,
+          'init_add_s_arr': init_add_s_arr,
+          'epe': epe
         }
         import pickle
         with open(b, 'wb') as handle:
           pickle.dump(dic, handle, protocol=pickle.HIGHEST_PROTOCOL)
-        break
 
       print(f"Inferenced {i}/{elements}")
       valid_element = True
@@ -141,8 +176,6 @@ class Evaluator():
         
         if batch[0] is None and k == 0:
           print ("Cant start given PoseCNN fails!")
-          add_s[i,:] = np.inf
-          add[i,:] = np.inf
           idx_arr[i] = int( batch[1] )
           valid_element = False
           break
@@ -155,21 +188,29 @@ class Evaluator():
         flow_predictions, pred_valid = self._inferencer( batch ) # 200ms
         valid_corrospondences[i,k] = int( pred_valid.sum() )
         gt_valid = batch[3]
-        
+        gt_flow = batch[2]
+        _epe = float( ((torch.sum((flow_predictions[-1] - gt_flow)**2, dim=1).sqrt()  * gt_valid).sum() / gt_valid.sum()).cpu())
+        print( "0: " ,float( ((torch.sum((flow_predictions[0] - gt_flow)**2, dim=1).sqrt()  * gt_valid).sum() / gt_valid.sum()).cpu()), " -1:", float( ((torch.sum((flow_predictions[-1] - gt_flow)**2, dim=1).sqrt()  * gt_valid).sum() / gt_valid.sum()).cpu()))
         h_gt, h_render, h_init, bb, idx, K_ren, K_real, render_d, model_points, img_real_ori, p = batch[5:]
+        
+        if self._exp['eval_cfg']['use_gt_valid']:
+          fv = gt_valid
+        else:
+          fv =  pred_valid
+
         res_dict, count_invalid, h_pred__pred_pred, ratios, valid = full_pose_estimation( 
-          h_gt = h_gt.clone(), 
-          h_render = h_render.clone(),
-          h_init = h_init.clone(),
+          h_gt = h_gt, 
+          h_render = h_render,
+          h_init = h_init,
           bb = bb, 
-          flow_valid = pred_valid.clone(), # TODO: Jonas Frey remove and check why segmentation is so bad
-          flow_pred = flow_predictions[-1].clone(), 
+          flow_valid = fv, # TODO: Jonas Frey remove and check why segmentation is so bad
+          flow_pred = flow_predictions[-1], 
           idx = idx.clone(),
           K_ren = K_ren,
           K_real = K_real,
-          render_d = render_d.clone(),
-          model_points = model_points.clone(),
-          cfg = self._exp.get("full_pose_estimation", {})) # 150ms
+          render_d = render_d,
+          model_points = model_points,
+          cfg = self._exp["eval_cfg"].get("full_pose_estimation", {})) # 150ms
         if k == 0:
           init_adds_arr[i] = res_dict['adds_h_init']
           init_add_s_arr[i] = res_dict['add_s_h_init']
@@ -178,6 +219,9 @@ class Evaluator():
           # got vaild prediction 
           adds[i,k] = res_dict['adds_h_pred']
           add_s[i,k] = res_dict['add_s_h_pred']
+
+          epe[i,k] = _epe
+
         else:
           print("Invalid")
 
@@ -211,11 +255,65 @@ class Evaluator():
         print( "AUC best valids: ", compute_auc( add_s[:i][sel2] ) )
         print( "INIT ADDS PoseCNN: ", compute_auc( init_add_s_arr[:i] )  )
 
+      if self._log:
+        
+        self._run
+        logs = { 
+          'add_s' : add_s,
+          'adds': adds,
+          'ratios_arr': ratios_arr,
+          'valid_corrospondences': valid_corrospondences,
+          'epe': epe
+        }
+        for k,v in logs.items():
+          for iter in range( self.iterations ):
+	          self._run[k+f'_iter_{iter}'].log( v[i,iter] )
+        
+        logs = {
+          'init_adds_arr': init_adds_arr,
+          'init_add_s_arr': init_add_s_arr,
+          'idx_arr': idx_arr, }
+
+        for k,v in logs.items():
+          self._run[k+f'_iter'].log( v[i] )
+
+        if i % 10 == 0 and i != 0:
+          # compute aucs
+          for iter in range( self.iterations ):
+            self._run["auc_add_s"+f'_iter_{iter}'].log( compute_auc( add_s[:i,iter]) )
+            self._run["auc_adds"+f'_iter_{iter}'].log(compute_auc( adds[:i,iter]) )
+          
+          self._run["auc_init_adds"].log(compute_auc( init_adds_arr[:i]) )
+          self._run["auc_init_add_s"].log(compute_auc( init_add_s_arr[:i]) )
+          for _j in range(21):
+            m = idx_arr[:i] == _j
+            for iter in range( self.iterations ):
+              self._run[f"auc_add_s_obj_{_j}"+f'_iter_{iter}'].log( compute_auc( add_s[:i][m,iter]) )
+              self._run[f"auc_adds_obj_{_j}"+f'_iter_{iter}'].log(compute_auc( adds[:i][m,iter]) )
+            
+            self._run[f"auc_init_adds_obj_{_j}"].log(compute_auc( init_adds_arr[:i][m]) )
+            self._run[f"auc_init_add_s_obj_{_j}"].log( compute_auc( init_add_s_arr[:i][m]) )
 
 
+    st = self._exp['eval_cfg']["output_filename"] 
+    b = os.path.join(self._exp["name"], f"{self.mode}_{st}_data_final.pkl")
+    dic = {
+      'add_s' : add_s,
+      'adds': adds,
+      'idx_arr': idx_arr,
+      'ratios_arr': ratios_arr,
+      'valid_corrospondences': valid_corrospondences,
+      'init_adds_arr': init_adds_arr,
+      'init_add_s_arr': init_add_s_arr,
+      'epe': epe 
+    }
+    import pickle
+    with open(b, 'wb') as handle:
+      pickle.dump(dic, handle, protocol=pickle.HIGHEST_PROTOCOL)
+  
 if __name__ == '__main__':
   parser = argparse.ArgumentParser()    
-  parser.add_argument('--exp', type=file_path, default='cfg/exp/exp.yml',
+  parser.add_argument('--exp', type=file_path, default='cfg/exp/final/1_pose_prediction/gt_valid/gt_valid.yml',
                       help='The main experiment yaml file.')
 
   args = parser.parse_args()
@@ -254,8 +352,14 @@ if __name__ == '__main__':
     res = torch.load( p )
     out = inference_manager._inferencer.load_state_dict( res['state_dict'], 
             strict=False)
-    print( "Restore weights from ckpts", out)
-
+    
+    if len(out[1]) > 0:
+      print( "Restore weights from ckpts", out)
+      raise Exception(f"Not found seg checkpoint: {p}")
+    else:
+      print( "Restore flow-weights from ckpts successfull" )
+  else:
+    raise Exception(f"Not found flow checkpoint: {p}")
   p = os.path.join( env['base'],exp['checkpoint_load_seg'])
   if os.path.isfile( p ):
     res = torch.load( p )
@@ -264,7 +368,14 @@ if __name__ == '__main__':
       new_statedict[k.replace('model','seg') ] = v
     out = inference_manager._inferencer.load_state_dict( new_statedict, 
             strict=False)
-    print( "Restore_seg weights from ckpts", out)
+    
+    if len(out[1]) > 0:
+      print( "Restore_seg weights from ckpts", out)
+      raise Exception(f"Not found seg checkpoint: {p}")
+    else:
+      print( "Restore seg-weights from ckpts successfull" )
+  else:
+    raise Exception(f"Not found seg checkpoint: {p}")
 
   # PERFORME EVALUATION
   test_dataloader = datasets.fetch_dataloader( exp['test_dataset'], env )

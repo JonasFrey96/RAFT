@@ -205,7 +205,10 @@ class HD1K(FlowDataset):
 
 
 def fetch_dataloader(cfg, env, TRAIN_DS='C+T+K+S+H'):
-    """ Create the data loader for the corresponding trainign set """
+    """ Create the data loader for the corresponding trainign set 
+    cfg := exp['test_dataset']
+    env := env
+    """
 
     if cfg['stage'] == 'chairs':
         aug_params = {'crop_size': cfg['image_size'], 'min_scale': -0.1, 'max_scale': 1.0, 'do_flip': True}

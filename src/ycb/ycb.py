@@ -39,38 +39,35 @@ from ycb.ycb_helper import Augmentation
 from ycb.ycb_helper import ViewpointManager
 from ycb.ycb_helper import backproject_points
 
-from utils.augmentor import FlowAugmentor, SparseFlowAugmentor
 import pickle
 from torch import from_numpy as fn
 
 class YCB(torch.utils.data.Dataset):
   def __init__(self, root, mode, image_size, cfg_d ):
-    """
-    image_size: Tuple H,W
-    """
     self.estimate_pose = False
-
-    self._cfg_d = cfg_d
     
+    self._h = image_size[0]
+    self._w = image_size[1]
+    self._cfg_d = cfg_d
     self._load(mode,root)
     self._pcd_cad_list = self._get_pcd_cad_models(root)
-    self._h = 480
-    self._w = 640
-    
-    self._image_size = image_size
     
     self._aug = Augmentation(add_depth= cfg_d.get('add_depth',False),
-                 output_size=image_size, 
-                 input_size=image_size)
+                 output_size=(self._h,self._w), 
+                 input_size=(self._h,self._w))
     
-    self._flow_augmenter = SparseFlowAugmentor(**cfg_d['aug_params'])
 
     self._trancolor_background = transforms.ColorJitter(0.1, 0.1, 0.1, 0.05)
     
-    if mode == "test":
+    if mode == "test" or mode == "val":
       self._trancolor = transforms.ColorJitter(0.01, 0.01, 0.01, 0.005)
     else:
-      self._trancolor = transforms.ColorJitter(0.2, 0.2, 0.2, 0.05)
+      ccj = cfg_d['aug_params'].get('color_jitter',{
+        "brightness":0.3,
+        "contrast":0.3,
+        "saturation": 0.3,
+        "hue": 0.05})
+      self._trancolor = transforms.ColorJitter(  **ccj )
 
 
     self._vm = ViewpointManager(
@@ -91,6 +88,25 @@ class YCB(torch.utils.data.Dataset):
     self.segmentation_only = False
     self.if_err_ret_none = False
     self.valid_flow_minimum = 100
+
+    if self._cfg_d.get( 'init_mode', 'pose_cnn') == 'pose_cnn':
+      
+      with open('cfg/datasets/ycb/data_posecnn.pickle', 'rb') as handle:
+          self._posecnn_data = pickle.load(handle)
+
+    if not self._cfg_d.get('filter', None) is None:
+      keep = []
+      for i in range(0, len(self._base_path_list) ):
+        keep.append( self._obj_idx_list[i] in  self._cfg_d['filter'] )
+      
+      keep = np.array(keep)
+      print("Filter dataset: ", self._cfg_d['filter'], " from ", len(self._base_path_list), " to ", keep.sum())
+      self._base_path_list = np.array(self._base_path_list)[keep].tolist()
+      self._obj_idx_list = np.array(self._obj_idx_list)[keep].tolist()
+      self._camera_idx_list = np.array(self._camera_idx_list)[keep].tolist()
+
+      self._length = len( self._base_path_list )
+
 
   def _load(self, mode, root):
     with open(f'cfg/datasets/ycb/{mode}.pkl', 'rb') as handle:
@@ -233,7 +249,7 @@ class YCB(torch.utils.data.Dataset):
     if h_real_est is None:
       m = self._cfg_d.get( 'init_mode', 'pose_cnn')
       if m == 'pose_cnn':
-        h_real_est = get_init_pose_posecnn( obj_idx, p, h_gt, model_points, K, size=(self._h,self._w))
+        h_real_est = self._get_init_pose_posecnn( obj_idx, p )
       elif m == 'tracking':
         h_real_est = get_init_pose_track( obj_idx, p, h_gt, model_points, K , size=(self._h,self._w))
       elif m == 'tracking_gt':
@@ -274,7 +290,11 @@ class YCB(torch.utils.data.Dataset):
     render = res_get_render[1]
     # AUGMENTATION
     real = self._trancolor( real.permute(2,0,1)/255 )
-    render = self._trancolor( render.permute(2,0,1)/255 )
+
+    if self._cfg_d['aug_params'].get('color_jitter_render', True):
+      render = self._trancolor( render.permute(2,0,1)/255 )
+    else:
+      render = render.permute(2,0,1)/255
   
     if self.segmentation_only:
       return (real , render, res_get_render[2].type( torch.long), torch.tensor( synthetic ))
@@ -286,7 +306,6 @@ class YCB(torch.utils.data.Dataset):
     # TEMPLATE INTERFACE
     flow = flow.numpy().astype(np.float32) #H,W,
     valid = res_get_render[7].numpy().astype(np.float32)
-    # img1, img2, flow, valid = self._flow_augmenter(img1, img2, flow, valid)
     if valid is not None:
       valid = torch.from_numpy(valid)
     else:
@@ -348,8 +367,8 @@ class YCB(torch.utils.data.Dataset):
     h = self._h
     w = self._w
 
-    output_h = self._image_size[0]
-    output_w = self._image_size[1]
+    output_h = self._h
+    output_w = self._w
 
     h_init = h_real_est
     
@@ -377,7 +396,7 @@ class YCB(torch.utils.data.Dataset):
     center_ren = center_ren.squeeze()
     b_ren.move(-center_ren[1], -center_ren[0])
     b_ren.expand( self._cfg_d.get('expand_factor', 1.3) )
-    b_ren.expand_to_correct_ratio(w, w)
+    b_ren.expand_to_correct_ratio(output_w, output_h)
     b_ren.move(center_ren[1], center_ren[0])
     ren_h = b_ren.height()
     ren_w = b_ren.width()
@@ -408,7 +427,7 @@ class YCB(torch.utils.data.Dataset):
     
     b_real.move(-center_real[0], -center_real[1])
     b_real.expand( self._cfg_d.get('expand_factor', 1.3) )
-    b_real.expand_to_correct_ratio(w, w)
+    b_real.expand_to_correct_ratio(output_w, output_h)
     b_real.move(center_real[0], center_real[1])
     real_h = b_real.height()
     real_w = b_real.width()
@@ -632,7 +651,24 @@ class YCB(torch.utils.data.Dataset):
       input_file.close()
 
     return cad_list
+  def _get_init_pose_posecnn(self, obj_idx, p ):
+    seq_id = int( p.split('/')[-2])
+    frame_id = int( p.split('/')[-1])
 
+    seq_ids = np.array( [d['seq_id'] for d in self._posecnn_data])
+    frame_ids =  np.array([d['Frame_id'] for d in self._posecnn_data])
+    cls_ids =  np.array([d['cls_index'] for d in self._posecnn_data])
+
+    a = (seq_ids == seq_id) * (frame_ids == frame_id) * (cls_ids == obj_idx)
+    
+    if a.sum() != 1: return None
+    
+    idx = np.where(a)[0][0]
+    h = np.eye(4)
+    h[:3] = self._posecnn_data[idx]["H"]
+
+    return h
+	
 
 
 def get_init_pose_track( obj_idx, p, h_gt, model_points, K,size ):
@@ -678,6 +714,7 @@ def get_init_pose_track_gt( obj_idx, p, h_gt, model_points, K,size ):
   return h_gt
 
 def get_init_pose_posecnn( obj_idx, p, h_gt, model_points, K, size):
+  
   h_real_est = None
   base = "/home/jonfrey/PoseCNN-PyTorch/output/ycb_video/ycb_video_keyframe/vgg16_ycb_video_epoch_16.checkpoint.pth/"
   m = os.path.join( base, p.split('/')[-2] + '_' + p.split('/')[-1] +'.mat' )

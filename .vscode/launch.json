@@ -12,7 +12,15 @@
 			"console": "integratedTerminal",
 			"cwd": "/home/jonfrey/RPOSE",
 			"python.pythonPath": "/home/jonfrey/miniconda3/envs/track4/bin/python",
-			"envFile": "/home/jonfrey/RPOSE/cfg/debug/debug.env"
+		},
+		{
+			"name": "RPOSE Evaluator",
+			"type": "python",
+			"request": "launch",
+			"program": "/home/jonfrey/RPOSE/src/lightning/evaluator.py",
+			"console": "integratedTerminal",
+			"cwd": "/home/jonfrey/RPOSE",
+			"python.pythonPath": "/home/jonfrey/miniconda3/envs/track4/bin/python"
 		},
 		{
 			"name": "RPOSE Current File",
@@ -22,7 +30,16 @@
 			"console": "integratedTerminal",
 			"cwd": "/home/jonfrey/RPOSE",
 			"python.pythonPath": "/home/jonfrey/miniconda3/envs/track4/bin/python",
-			"envFile": "/home/jonfrey/RPOSE/cfg/debug/debug.env"
+		},
+		{
+			"name": "RAFT SCANNET",
+			"type": "python",
+			"request": "launch",
+			"program": "/home/jonfrey/RAFT/eval.py",
+			"console": "integratedTerminal",
+			"cwd": "/home/jonfrey/RAFT",
+			"python.pythonPath": "/home/jonfrey/miniconda3/envs/track4/bin/python"
 		}
+
 	]
 }

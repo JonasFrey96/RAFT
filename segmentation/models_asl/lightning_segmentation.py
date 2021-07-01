@@ -79,6 +79,7 @@ class Network(LightningModule):
   def on_train_start(self):
     print('Start')
     self.visualizer.logger= self.logger
+    print(self.logger, "LOOOOOOOOOOGGGGGGGGGGGGEEEEEERRRRRRRR")
     
   def on_epoch_start(self):
     self.visualizer.epoch = self.current_epoch
@@ -160,6 +161,11 @@ class Network(LightningModule):
   def validation_step(self, batch, batch_idx, dataloader_idx=0):
     return self.training_step(batch, batch_idx)
   
+  def on_validation_epoch_start(self):
+    self._mode = 'val'
+    for k in self._plot_images.keys():
+      self._plot_images[k] = 0
+    
 
   def on_test_epoch_start(self):
     self._mode = 'test'
@@ -182,14 +188,25 @@ class Network(LightningModule):
       raise Exception
 
     if self._exp.get('lr_scheduler',{}).get('active', False):
-      #polynomial lr-scheduler
-      init_lr = self.hparams['lr']
-      max_epochs = self._exp['lr_scheduler']['cfg']['max_epochs'] 
-      target_lr = self._exp['lr_scheduler']['cfg']['target_lr'] 
-      power = self._exp['lr_scheduler']['cfg']['power'] 
-      lambda_lr= lambda epoch: (((max_epochs-min(max_epochs,epoch) )/max_epochs)**(power) ) + (1-(((max_epochs -min(max_epochs,epoch))/max_epochs)**(power)))*target_lr/init_lr
-      scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda_lr, last_epoch=-1, verbose=True)
-      ret = [optimizer], [scheduler]
+      if self._exp['lr_scheduler']['name'] == 'POLY':
+        #polynomial lr-scheduler
+        init_lr = self.hparams['lr']
+        max_epochs = self._exp['lr_scheduler']['poly_cfg']['max_epochs'] 
+        target_lr = self._exp['lr_scheduler']['poly_cfg']['target_lr'] 
+        power = self._exp['lr_scheduler']['poly_cfg']['power'] 
+        lambda_lr= lambda epoch: (((max_epochs-min(max_epochs,epoch) )/max_epochs)**(power) ) + (1-(((max_epochs -min(max_epochs,epoch))/max_epochs)**(power)))*target_lr/init_lr
+        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda_lr, last_epoch=-1, verbose=True)
+      elif self._exp['lr_scheduler']['name'] == 'OneCycleLR':
+        num_steps = self._exp['lr_scheduler']['onecyclelr_cfg']['num_steps']
+
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr = self.hparams['lr'], total_steps = num_steps+100,
+          pct_start=0.05, cycle_momentum=False, anneal_strategy='linear')
+      
+      lr_scheduler = {
+                    'scheduler': scheduler,
+                    'interval': "step" }
+
+      ret = {'optimizer': optimizer, 'lr_scheduler': lr_scheduler}
     else:
       ret = [optimizer]
     return ret

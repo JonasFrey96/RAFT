@@ -1,43 +1,24 @@
 # STD
-import copy
-import sys
 import os
-import time
 import shutil
-import argparse
-import logging
-import signal
-import pickle
-import math
 from pathlib import Path
-import random 
-from math import pi
-from math import ceil
-import logging
 
 # MISC 
 import numpy as np
-import pandas as pd
 
 # DL-framework
 import torch
+import torch.optim.lr_scheduler
 from pytorch_lightning.core.lightning import LightningModule
-from pytorch_lightning import Trainer
-import pytorch_lightning as pl
 from torchvision import transforms
-from pytorch_lightning import metrics as pl_metrics
-from pytorch_lightning.utilities import rank_zero_info, rank_zero_warn
 from torchvision.utils import make_grid
-from torch.nn import functional as F
 from torch import from_numpy as fn
 # MODULES
 
-import datetime
-from math import ceil
 from src_utils import DotDict
 from raft import RAFT
 from visu import Visualizer
-from pose_estimation import full_pose_estimation, compute_auc, compute_percentage
+from pose_estimation import full_pose_estimation
 
 from models_asl import FastSCNN
 
@@ -136,6 +117,7 @@ class Network(LightningModule):
     return flow_predictions
   
   def on_train_epoch_start(self):
+    
     self._visu.logger= self.logger
     self._mode = 'train'
      
@@ -159,7 +141,7 @@ class Network(LightningModule):
 
     flow_predictons is a list len(flow_predictions) = iters , flow_predictions[0].shape == flow.shape 
     """
-
+    self.log("learning_rate", float(self.trainer.lr_schedulers[0]['scheduler'].get_lr()[0]), on_step=True)
     BS = batch[0].shape[0] 
     flow = batch[2]
     valid = batch[3]
@@ -180,7 +162,7 @@ class Network(LightningModule):
       h_gt, h_render, h_init, bb, idx, K_ren, K_real, render_d, model_points, img_real_ori, p = batch[5:]
       
       # ESTIMATE POSE
-      res_dict, count_invalid, h_pred__pred_pred, ratios = full_pose_estimation( 
+      res_dict, count_invalid, h_pred__pred_pred, ratios, valid_res = full_pose_estimation( 
         h_gt = h_gt.clone(), 
         h_render = h_render.clone(),
         h_init = h_init.clone(),
@@ -192,7 +174,7 @@ class Network(LightningModule):
         K_real = K_real,
         render_d = render_d.clone(),
         model_points = model_points.clone(),
-        cfg = self._exp.get("full_pose_estimation", {})
+        cfg = self._exp['eval_cfg'].get("full_pose_estimation", {})
       )
       try:
         self.count_suc += BS-count_invalid
@@ -279,7 +261,7 @@ class Network(LightningModule):
           K_real = K_real,
           render_d = render_d.clone(),
           model_points = model_points.clone(),
-          cfg = self._exp.get("full_pose_estimation", {})
+          cfg = self._exp["eval_cfg"].get("full_pose_estimation", {})
         )
         for k in res_dict.keys():
           self.log(f'{self._mode}_{k}_gt_flow_gt_seg', res_dict[k].mean(), on_step=True, on_epoch=True, prog_bar=True)
@@ -298,7 +280,7 @@ class Network(LightningModule):
           K_real = K_real,
           render_d = render_d.clone(),
           model_points = model_points.clone(),
-          cfg = self._exp.get("full_pose_estimation", {})
+          cfg = self._exp["eval_cfg"].get("full_pose_estimation", {})
         )
         for k in res_dict.keys():
           self.log(f'{self._mode}_{k}_pred_flow_gt_seg', res_dict[k].mean(), on_step=True, on_epoch=True, prog_bar=False)
@@ -419,73 +401,6 @@ class Network(LightningModule):
   def validation_epoch_end(self, outputs):
     pass
 
-  def test_step(self, batch, batch_idx, dataloader_idx=0):      
-    outputs = self.training_step(batch, batch_idx)
-    return outputs
-  
-  def test_step_end( self, outputs ):
-    self.log('test_loss', outputs['loss'], on_step=True, on_epoch=True, prog_bar=True, sync_dist=True, sync_dist_op=None)
-  
-  def on_test_epoch_start(self):
-    self._visu.logger= self.logger
-    self._mode = 'test'
-    if self._estimate_pose:
-      self.trainer.test_dataloaders[0].dataset.estimate_pose = True
-      print( "Set dataloader test to return metrices to estimate OBJECT POSE")
-
-      self._adds = {str(k): [] for k in range(22)}
-      self._add_s = {str(k): [] for k in range(22)}
-
-      self._adds_init = {str(k): [] for k in range(22)}
-      self._add_s_init = {str(k): [] for k in range(22)}
-
-
-  
-  def test_epoch_end(self, outputs):
-
-    properties = {}
-    for index_key in self._adds.keys():
-      if len( self._adds[index_key] ) > 0:
-        properties['MEAN_ADDS__OBJ('+index_key+")_PRED_CM" ] = round( sum( self._adds[index_key]) / len( self._adds[index_key] ) *100,2)
-        properties['MEAN_ADDS__OBJ('+index_key+")_INIT_CM" ] = round( sum( self._adds_init[index_key]) / len( self._adds_init[index_key] ) *100,2)
-    for index_key in self._adds.keys():
-      if len( self._adds[index_key] ) > 0:        
-        properties['MEAN_ADD_S_OBJ('+index_key+")_PRED_CM" ] = round( sum( self._add_s[index_key]) / len( self._add_s[index_key] ) *100,2)
-        properties['MEAN_ADD_S_OBJ('+index_key+")_INIT_CM" ] = round( sum( self._add_s_init[index_key]) / len( self._add_s_init[index_key] ) *100,2)
-    for index_key in self._adds.keys():
-      if len( self._adds[index_key] ) > 0:
-        properties['AUC_ADDS_OBJ('+index_key+")_PRED"] = round( compute_auc( np.array( self._adds[index_key] )),2)
-        properties['AUC_ADDS_OBJ('+index_key+")_INIT"] = round( compute_auc( np.array( self._adds_init[index_key] )),2)
-    for index_key in self._adds.keys():
-      if len( self._adds[index_key] ) > 0:
-        properties['AUC_ADD_S_OBJ('+index_key+")_PRED"] = round( compute_auc( np.array( self._add_s[index_key] )) ,2)
-        properties['AUC_ADD_S_OBJ('+index_key+")_INIT"] = round( compute_auc( np.array( self._add_s_init[index_key] )) ,2)
-    for index_key in self._adds.keys():
-      if len( self._adds[index_key] ) > 0:
-        properties['2CM_ADDS_OBJ('+index_key+")_PRED"] = round( compute_percentage( np.array( self._adds[index_key] ))  ,2)
-        properties['2CM_ADDS_OBJ('+index_key+")_INIT"] = round( compute_percentage( np.array( self._adds_init[index_key] ))  ,2)
-    for index_key in self._adds.keys():
-      if len( self._adds[index_key] ) > 0:
-        properties['2CM_ADD_S_OBJ('+index_key+")_PRED"] = round( compute_percentage( np.array( self._add_s[index_key] ))  ,2)
-        properties['2CM_ADD_S_OBJ('+index_key+")_INIT"] = round( compute_percentage( np.array( self._add_s_init[index_key] ))  ,2)
-    kk = list( properties.keys())
-    kk.sort()
-    for p in kk :
-      self.logger.experiment.set_property( p, properties[p] )
-
-      if p.find('PRED') != -1:
-        print( p.replace("PRED","") , " INIT: " , properties[p.replace('PRED','INIT')], " PRED: ",  properties[p])
-      # print( p, ": ", properties[p])
-
-    import pickle
-    properties ['self._adds'] = self._adds
-    properties ['self._add_s'] = self._add_s
-    properties ['self._adds_init'] = self._adds_init
-    properties ['self._add_s_init'] = self._add_s_init
-    with open(os.path.join(self._exp['name'], 'results.pkl'), 'wb') as handle:
-        pickle.dump(properties, handle, protocol=pickle.HIGHEST_PROTOCOL)
-    self.logger.experiment.log_artifact( os.path.join(self._exp['name'], 'results.pkl') )
-
   def configure_optimizers(self):
     if self._exp['optimizer']['name'] == 'ADAM':
       optimizer = torch.optim.Adam(
@@ -511,10 +426,15 @@ class Network(LightningModule):
         scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda_lr, last_epoch=-1, verbose=True)
       elif self._exp['lr_scheduler']['name'] == 'OneCycleLR':
         num_steps = self._exp['lr_scheduler']['onecyclelr_cfg']['num_steps']
-        scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr = self.hparams['lr'], total_steps = num_steps+100,
-        pct_start=0.05, cycle_momentum=False, anneal_strategy='linear')
 
-      ret = [optimizer], [scheduler]
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr = self.hparams['lr'], total_steps = num_steps+100,
+          pct_start=0.05, cycle_momentum=False, anneal_strategy='linear')
+      
+      lr_scheduler = {
+                    'scheduler': scheduler,
+                    'interval': "step" }
+
+      ret = {'optimizer': optimizer, 'lr_scheduler': lr_scheduler}
     else:
       ret = [optimizer]
     return ret
