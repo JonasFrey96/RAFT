@@ -36,7 +36,7 @@ if __name__ == "__main__":
   signal.signal(signal.SIGTERM, signal_handler)
   
   parser = argparse.ArgumentParser()    
-  parser.add_argument('--exp', type=file_path, default="cfg/exp/final/0_training_flow/debug/debug.yml",
+  parser.add_argument('--exp', type=file_path, default="cfg/exp/dry_run/0_training_flow/objects_individual/objects_individual_11.yml",
                       help='The main experiment yaml file.')
 
   args = parser.parse_args()

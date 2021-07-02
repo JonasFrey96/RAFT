@@ -94,6 +94,7 @@ class YCB(torch.utils.data.Dataset):
       with open('cfg/datasets/ycb/data_posecnn.pickle', 'rb') as handle:
           self._posecnn_data = pickle.load(handle)
 
+    self._base_path_list_background = copy.deepcopy( self._base_path_list )
     if not self._cfg_d.get('filter', None) is None:
       keep = []
       for i in range(0, len(self._base_path_list) ):
@@ -171,8 +172,8 @@ class YCB(torch.utils.data.Dataset):
   
   def _get_background_image(self, obj_idx):
     while 1:
-      index = random.randint(0, len(self)-1)
-      p = self._base_path_list[index]
+      index = random.randint(0, len(self._base_path_list_background)-1)
+      p = self._base_path_list_background[index]
       if p.find( 'data_syn') != -1:
         continue
       meta = scio.loadmat( p+"-meta.mat")
@@ -337,7 +338,8 @@ class YCB(torch.utils.data.Dataset):
               img_ori, 
               p) 
     else:
-      return (real, render, flow, valid.float(), torch.tensor( synthetic ), idx)
+      bb = res_get_render[8] 
+      return (real, render, flow, valid.float(), torch.tensor( synthetic ), idx, bb)
 
   def get_rendered_data(self, img, depth_real, label, model_points, obj_idx, K_real, cam_flag, h_gt, h_real_est=None):
     """Get Rendered Data

@@ -125,7 +125,7 @@ val_dataset:
 cb_time:
   active: True
   cfg:
-    timelimit_in_min: 4200
+    timelimit_in_min: 4140
     verbose: True
 
 cb_early_stopping:

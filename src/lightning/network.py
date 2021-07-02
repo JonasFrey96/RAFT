@@ -151,7 +151,6 @@ class Network(LightningModule):
     loss, metrics, epe_per_object = sequence_loss(flow_predictions, flow, valid, synthetic, self._exp['model']['gamma'])
 
     if self._estimate_pose:
-      
       # PRED FLOW 
       inp = torch.cat ( [self.output_transform_seg(batch[0]/255.0),
       self.output_transform_seg(batch[1]/255.0 ) ],dim=1)
@@ -287,16 +286,36 @@ class Network(LightningModule):
         
     else:
       idx = batch[5]
+      bb = batch[6] # list containing tensors for [real_tl ,real_br, ren_tl, ren_br ]
       
     logging_metrices = ['epe', 'epe_real', 'epe_render']
     for met in logging_metrices:
       if met in metrics:
         self.log(f'{self._mode}_{met}', metrics[met], on_step=True, on_epoch=True, prog_bar=True)
     
+
     if self._exp.get( 'log',{}).get('individual_obj',{}).get(self._mode, False):
       for i in range(BS):
         obj = str(int(idx[i]))
-        self.log(f'{self._mode}_{met}_obj{obj}', epe_per_object[i].float().item(), on_step=True, on_epoch=True, prog_bar=True)
+        # real_tl ,real_br, ren_tl, ren_br 
+        tl = bb[0][i]
+        br = bb[1][i]
+
+        _w = br[1]-tl[1]
+        _h = br[0]-tl[0]
+        
+        # r1 and r2 should be equal up to discretization errors
+        r1 = 480/_h
+        r2 = 640/_w
+        r = (r1+r2)/2
+        if synthetic[i]:  
+          self.log(f'{self._mode}_render_norm_obj{obj}', epe_per_object[i].float().item()/r, on_step=True, on_epoch=True, prog_bar=True)
+          self.log(f'{self._mode}_render_obj{obj}', epe_per_object[i].float().item(), on_step=True, on_epoch=True, prog_bar=True)
+        else:
+          self.log(f'{self._mode}_real_norm_obj{obj}', epe_per_object[i].float().item()/r, on_step=True, on_epoch=True, prog_bar=True)
+          self.log(f'{self._mode}_real_obj{obj}', epe_per_object[i].float().item(), on_step=True, on_epoch=True, prog_bar=True)
+
+
           
     self._count_real[self._mode] += (synthetic ==False).sum()
     self._count_render[self._mode] += (synthetic).sum()
@@ -413,7 +432,7 @@ class Network(LightningModule):
       optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.hparams['lr'],**self._exp['optimizer']['wadam_cfg'] )
 
     else:
-      raise Exception
+      raise Exception("Optimizer name not defined")
 
     if self._exp.get('lr_scheduler',{}).get('active', False):
       if self._exp['lr_scheduler']['name'] == 'POLY':

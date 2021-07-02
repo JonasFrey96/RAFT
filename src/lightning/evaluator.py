@@ -78,12 +78,11 @@ class Evaluator():
       files = [ str(s) for s in Path( exp["name"]).rglob("*.yml") ]
       
       if env['workstation']:
-
-        self._run = neptune.init(project='jonasfrey96/rpose',
+        self._run = neptune.init(project='jonasfrey96/' + exp['neptune_project_name'],
                     api_token=os.environ["NEPTUNE_API_TOKEN"], tags= [exp['name'],"workstation_"+str(env['workstation']) ],
                     source_files = files)
       else:
-        self._run = neptune.init(project='jonasfrey96/rpose',
+        self._run = neptune.init(project='jonasfrey96/' + exp['neptune_project_name'],
             api_token=os.environ["NEPTUNE_API_TOKEN"], proxies={'http': 'http://proxy.ethz.ch:3128',
             'https': 'http://proxy.ethz.ch:3128'}, tags= [exp['name'],"workstation_"+str(env['workstation']) ],
             source_files  = files)
