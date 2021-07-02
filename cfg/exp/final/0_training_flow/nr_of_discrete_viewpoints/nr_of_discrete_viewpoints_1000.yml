@@ -1,0 +1,218 @@
+name: training_flow/nr_of_discrete_viewpoints_1000
+neptune_project_name: rpose
+offline_mode: false
+timestamp: true
+weights_restore: true
+checkpoint_load: models/raft-kitti.pth
+weights_restore_seg: true
+checkpoint_load_seg: seg_exp/24h_long_run_fully_working/last.ckpt
+checkpoint_restore: false
+
+mode: train_and_test
+
+##############################################################
+########################   TRAINING ##########################
+##############################################################
+
+lr: 0.0001
+lr_scheduler:
+  active: true
+  name: OneCycleLR
+  poly_cfg:
+    power: 0.9
+    max_epochs: 100
+    target_lr: 1.0e-06
+  onecyclelr_cfg:
+    num_steps: 300000
+
+optimizer:
+  name: WADAM
+  sgd_cfg:
+    momentum: 0.9
+    weight_decay: 4.0e-05
+  wadam_cfg:
+   weight_decay: 0.00001 
+   eps: 1.0e-08
+
+trainer:
+  precision: 16
+  accumulate_grad_batches: 1
+  fast_dev_run: false
+  limit_train_batches: 5000
+  limit_val_batches: 500
+  limit_test_batches: 1.0
+  progress_bar_refresh_rate: 10
+  max_steps: 300000
+  max_epochs: 1000
+  gpus: -1
+  num_sanity_val_steps: 0
+  check_val_every_n_epoch: 1
+  profiler: False
+  accelerator: ddp
+
+seg:
+  name: Fast-SCNN
+  cfg:
+    num_classes: 2
+    aux: false
+    extraction:
+      active: false
+      layer: 'learn_to_down'
+    input_channels: 6
+
+model:
+  name: RPOSE
+  args:
+    small: False
+  gamma: 0.85
+  iters: 12
+
+train_dataset:
+  stage: ycb
+  image_size:
+    - 480
+    - 640
+  mode: train_new_syn
+  cfg_ycb:
+    init_mode: noise
+    expand_factor: 1.1
+    nr_of_discrete_viewpoints: 1000
+    aug_params:
+      color_jitter_render: False
+      color_jitter: 
+        brightness: 0.3
+        contrast: 0.3
+        saturation: 0.3
+        hue: 0.05
+    output_cfg:
+      noise_translation: 0.03
+      noise_rotation: 30
+    ratio:
+      data: 1
+      data_syn: 0.5
+      data_syn_new: 0.5
+  loader:
+    pin_memory: true
+    batch_size: 5
+    shuffle: true
+    num_workers: 20
+
+val_dataset:
+  stage: ycb
+  image_size:
+    - 480
+    - 640
+  mode: test
+  cfg_ycb:
+    init_mode: noise
+    expand_factor: 1.1
+    nr_of_discrete_viewpoints: 1000
+    aug_params:
+      color_jitter_render: False
+      color_jitter: 
+        brightness: 0.03
+        contrast: 0.03
+        saturation: 0.03
+        hue: 0.005
+    output_cfg:
+      noise_translation: 0.03
+      noise_rotation: 30
+  loader:
+    pin_memory: true
+    batch_size: 5
+    shuffle: false
+    num_workers: 20
+
+# CALLBACKS
+cb_time:
+  active: True
+  cfg:
+    timelimit_in_min: 4200
+    verbose: True
+
+cb_early_stopping:
+  active: false
+  cfg:
+    monitor: val_loss_epoch
+    patience: 10000
+    strict: true
+    verbose: true
+    mode: min
+    min_delta: -0.0001
+
+cb_checkpoint:
+  active: true
+  nameing: 1
+  cfg:
+    verbose: true
+    monitor: train_loss
+    mode: min
+    prefix: ''
+    save_last: true
+    save_top_k: 1
+
+# LOGGING SETTINGS
+lr_monitor:
+  cfg:
+    logging_interval: step
+
+tag_list:
+  - default_settings
+
+logged_images_max:
+  train: 5
+  val: 5
+  test: 5
+
+log:
+  individual_obj:
+    train: True
+    val: True
+    test: True
+
+
+##############################################################
+########################   EVALUATION ########################
+##############################################################
+
+eval_cfg:
+  full_pose_estimation:
+    flow_to_trafo_PnP:
+      method: solvePnPRefineLM
+      reprojectionError: 3
+      iterationsCount: 100
+    trust_region: 0.1
+  iterations: 1
+  mode: MUTIPLE_INIT_POSES
+  use_gt_valid: True
+  output_filename: eval
+
+test_dataset:
+  stage: ycb
+  image_size:
+    - 480
+    - 640
+  mode: test
+  cfg_ycb:
+    init_mode: pose_cnn
+    expand_factor: 1.1
+    nr_of_discrete_viewpoints: 1000
+    aug_params:
+      color_jitter_render: False
+      color_jitter: 
+        brightness: 0.03
+        contrast: 0.03
+        saturation: 0.03
+        hue: 0.005
+    output_cfg:
+      noise_translation: 0.03
+      noise_rotation: 30
+  loader:
+    pin_memory: true
+    batch_size: 1
+    shuffle: false
+    num_workers: 0
+
+move_datasets:
+- ycb
+- data_syn_new

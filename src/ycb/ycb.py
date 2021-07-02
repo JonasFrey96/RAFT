@@ -73,7 +73,7 @@ class YCB(torch.utils.data.Dataset):
     self._vm = ViewpointManager(
       store=os.path.join(root,'viewpoints_renderings'),
       name_to_idx= self._names_idx,
-      nr_of_images_per_object=10000,
+      nr_of_images_per_object= cfg_d.get('nr_of_discrete_viewpoints', 10000),
       device='cpu',
       load_images=False)
 

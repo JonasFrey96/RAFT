@@ -53,7 +53,7 @@ class Network(LightningModule):
     self._env = env
     self.hparams['lr'] = self._exp['lr']
     print(self._exp)
-    self.model = FastSCNN(**self._exp['model']['cfg'])
+    self.model = FastSCNN(**self._exp['seg']['cfg'])
     
     p_visu = os.path.join( self._exp['name'], 'visu')
     self._output_transform = transforms.Compose([
@@ -62,7 +62,7 @@ class Network(LightningModule):
     self.visualizer = Visualizer(
       p_visu=p_visu,
       logger=None,
-      num_classes=self._exp['model']['cfg']['num_classes']+1)
+      num_classes=self._exp['seg']['cfg']['num_classes']+1)
     self._mode = 'train'
 
     self._plot_images = {'train': 0, 'val':0, 'test':0} 
@@ -79,11 +79,9 @@ class Network(LightningModule):
   def on_train_start(self):
     print('Start')
     self.visualizer.logger= self.logger
-    print(self.logger, "LOOOOOOOOOOGGGGGGGGGGGGEEEEEERRRRRRRR")
     
   def on_epoch_start(self):
     self.visualizer.epoch = self.current_epoch
-  
   
   def training_step(self, batch, batch_idx):
     real = self._output_transform(batch[0])
@@ -134,9 +132,11 @@ class Network(LightningModule):
   
   def plot(self, ori_real, ori_render, pred, target):
     i = int(self._plot_images[self._mode])
+    self.visualizer.plot_image( tag="abc",  img = np.uint8(  np.random.randint(0,255,(100,100,3)) ), method='default')
+
     if self._plot_images[self._mode] < self._plot_images_max[self._mode] :
       self._plot_images[self._mode] += 1
-      
+      print("PERFORM PLOT")
       BS = pred.shape[0]
       rows = int( BS**0.5 )
       grid_target = make_grid(target[:,None].repeat(1,3,1,1),nrow = rows, padding = 2,
@@ -150,13 +150,13 @@ class Network(LightningModule):
               scale_each = False, pad_value = 0)
 
       self.visualizer.plot_segmentation( label = grid_target[0], method= 'right')
-      self.visualizer.plot_segmentation( label = grid_pred[0], method= 'left', tag=f"{self._mode}_Left Pred, GT right_{i}")
+      self.visualizer.plot_segmentation( label = grid_pred[0], method= 'left', tag=f"{self._mode}_Left_Pred__GT_right_{i}")
 
       self.visualizer.plot_image( img = grid_ori_real, method= 'right')
-      self.visualizer.plot_segmentation( label = grid_pred[0], method= 'left', tag=f"{self._mode}_Left Pred, Right Image_{i}")
+      self.visualizer.plot_segmentation( label = grid_pred[0], method= 'left', tag=f"{self._mode}_Left_Pred__Right_Image_{i}")
 
       self.visualizer.plot_image( img = torch.cat( [grid_ori_real, grid_ori_render], dim=2) , method= 'right')
-      self.visualizer.plot_segmentation( label = grid_pred[0], method= 'left', tag=f"{self._mode}_Left Pred, Right Composed-Image_{i}")
+      self.visualizer.plot_segmentation( label = grid_pred[0], method= 'left', tag=f"{self._mode}_Left_Pred__Right_Composed-Image_{i}")
 
   def validation_step(self, batch, batch_idx, dataloader_idx=0):
     return self.training_step(batch, batch_idx)
@@ -172,7 +172,6 @@ class Network(LightningModule):
     for k in self._plot_images.keys():
       self._plot_images[k] = 0
     
-    
   def test_step(self, batch, batch_idx):
     return self.training_step(batch, batch_idx)
   
@@ -184,6 +183,8 @@ class Network(LightningModule):
       optimizer = torch.optim.SGD(
           [{'params': self.model.parameters()}], lr=self.hparams['lr'],
           **self._exp['optimizer']['sgd_cfg'] )
+    elif self._exp['optimizer']['name'] == 'WADAM':
+      optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.hparams['lr'],**self._exp['optimizer']['wadam_cfg'] )
     else:
       raise Exception
 

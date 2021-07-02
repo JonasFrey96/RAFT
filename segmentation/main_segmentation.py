@@ -7,31 +7,24 @@ sys.path.append(os.path.join(os.getcwd() + '/segmentation'))
 sys.path.append(os.path.join(os.getcwd() + '/core'))
 import coloredlogs
 coloredlogs.install()
-from collections import OrderedDict
-import time
 import shutil
 import datetime
 import argparse
 import signal
 import yaml
-import logging
 from pathlib import Path
-import copy
 # Frameworks
 import torch
-from torch.utils.tensorboard import SummaryWriter
 
 from pytorch_lightning import seed_everything, Trainer
 from pytorch_lightning.callbacks import EarlyStopping
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.callbacks import LearningRateMonitor
-from pytorch_lightning.callbacks import Callback
 from pytorch_lightning.profiler import AdvancedProfiler
 
 # Costume Modules
 from src_utils import file_path, load_yaml, get_neptune_logger, get_tensorboard_logger
 from models_asl import Network
-from src_utils import DotDict
 import datasets
 
 if __name__ == "__main__":
@@ -42,7 +35,7 @@ if __name__ == "__main__":
   signal.signal(signal.SIGTERM, signal_handler)
   
   parser = argparse.ArgumentParser()    
-  parser.add_argument('--exp', type=file_path, default='cfg/seg_exp/1/exp.yml',
+  parser.add_argument('--exp', type=file_path, default='cfg/exp/final/2_training_segmentation/debug/debug.yml',
                       help='The main experiment yaml file.')
 
   args = parser.parse_args()
@@ -51,7 +44,6 @@ if __name__ == "__main__":
 
   seed_everything(42)
   local_rank = int(os.environ.get('LOCAL_RANK', 0))
-
 
   if local_rank != 0:
     print( local_rank )
@@ -192,7 +184,10 @@ if __name__ == "__main__":
     trainer.test(model = model,
         test_dataloaders = test_dataloader,
         ckpt_path =os.path.join( env['base'],exp['checkpoint_load']) )
-          
+  else:
+    m = exp.get("mode","train")
+    raise ValueError(f"Mode: {m} is not defined")
+
   try:
     logger.experiment.stop()
   except:
