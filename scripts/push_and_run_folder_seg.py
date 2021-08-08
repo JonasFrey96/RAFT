@@ -62,7 +62,7 @@ fake = args.fake
 ign = args.ignore_workers 
 # Get all model_paths
 home = expanduser("~")
-p = f'{home}/RPOSE/cfg/seg_exp/{args.exp}/'
+p = f'{home}/RPOSE/cfg/exp/{args.exp}/'
 exps = [str(p) for p in Path(p).rglob('*.yml') if str(p).find('_tmp.yml') == -1]
 model_paths = []
 logging.info('')

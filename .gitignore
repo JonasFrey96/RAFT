@@ -10,4 +10,6 @@ cfg/exp/tmp/*
 .neptune/*
 .vscode/launch.json
 *.pkl
-/home/jonfrey/RPOSE/cfg/exp/final/3_template/*
+cfg/exp/*
+docs/predictions/*
+*.ipynb
